@@ -20,40 +20,6 @@ from ask_sdk_model.interfaces.audioplayer import (
     Stream, AudioItemMetadata, StopDirective,
 )
 
-# ── SAFE IMPORTS ──────────────────────────────
-_import_errors = []
-
-try:
-    from chatbot import ChatBot
-except Exception as e:
-    _import_errors.append(f"chatbot: {e}")
-    ChatBot = None
-
-try:
-    from realtime_search import RealtimeSearchEngine
-except Exception as e:
-    _import_errors.append(f"realtime_search: {e}")
-    RealtimeSearchEngine = None
-
-try:
-    from model import FirstLayerDMM
-except Exception as e:
-    _import_errors.append(f"model: {e}")
-    FirstLayerDMM = None
-
-try:
-    from automation import handle_automation
-except Exception as e:
-    _import_errors.append(f"automation: {e}")
-    handle_automation = None
-
-try:
-    from music_player import get_youtube_stream
-except Exception as e:
-    _import_errors.append(f"music_player: {e}")
-    get_youtube_stream = None
-
-# ─────────────────────────────────────────────
 app = Flask(__name__)
 
 ASSISTANT_NAME = os.environ.get("AssistantName", "Jarvis")
@@ -73,6 +39,13 @@ def sanitise(text: str) -> str:
     return text.replace("</s>", "").strip()[:7500]
 
 def process_decision(decision: list, original_query: str):
+    # Import only when actually needed
+    from model import FirstLayerDMM
+    from chatbot import ChatBot
+    from realtime_search import RealtimeSearchEngine
+    from automation import handle_automation
+    from music_player import get_youtube_stream
+
     R = any(i.startswith("realtime") for i in decision)
     merged = " and ".join(
         [" ".join(i.split()[1:]) for i in decision
@@ -116,6 +89,7 @@ class MusicPlayIntentHandler(AbstractRequestHandler):
     def can_handle(self, handler_input):
         return is_intent_name("MusicPlayIntent")(handler_input)
     def handle(self, handler_input):
+        from music_player import get_youtube_stream
         slots = handler_input.request_envelope.request.intent.slots
         song_slot = slots.get("song") if slots else None
         song = song_slot.value.strip() if song_slot and song_slot.value else None
@@ -139,6 +113,7 @@ class QueryIntentHandler(AbstractRequestHandler):
     def can_handle(self, handler_input):
         return is_intent_name("QueryIntent")(handler_input)
     def handle(self, handler_input):
+        from model import FirstLayerDMM
         slots = handler_input.request_envelope.request.intent.slots
         q_slot = slots.get("query") if slots else None
         query = q_slot.value.strip() if q_slot and q_slot.value else None
@@ -231,6 +206,4 @@ def alexa_endpoint():
 
 @app.route("/", methods=["GET"])
 def health():
-    if _import_errors:
-        return "<h2>❌ Import Errors:</h2><br>" + "<br>".join(_import_errors), 500
     return f"✅ {ASSISTANT_NAME} AI skill is running on Vercel! Endpoint: /alexa", 200
