@@ -1,23 +1,18 @@
 """
 music_player.py — Jarvis AI Alexa Skill
-YouTube Data API v3 for search + Cobalt API for stream extraction.
-Cobalt is free, no key needed, works from Vercel.
+YouTube Data API v3 for search + RapidAPI YouTube MP3 for stream URL.
 """
 
 import os
 import requests
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
 YOUTUBE_API_KEY = os.environ.get("YoutubeAPIKey", "")
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-COBALT_INSTANCES = [
-    "https://api.cobalt.tools",
-    "https://cobalt.ayaka.io",
-    "https://cobalt-api.kwiatekmiki.com",
-]
+RAPIDAPI_KEY    = os.environ.get("RapidAPIKey", "")
+HEADERS         = {"User-Agent": "Mozilla/5.0"}
 
 
 def _youtube_search(query: str):
@@ -53,71 +48,85 @@ def _youtube_search(query: str):
         return None, None
 
 
-def _cobalt_stream(video_id: str):
+def _rapidapi_stream(video_id: str):
     """
-    Get audio stream URL from Cobalt API.
-    Tries multiple instances with fallback.
+    Get MP3 stream URL via RapidAPI YouTube MP36.
+    Polls until ready (usually 2-5 seconds).
     """
-    yt_url = f"https://www.youtube.com/watch?v={video_id}"
+    if not RAPIDAPI_KEY:
+        logger.error("RapidAPIKey not set!")
+        return None
 
-    for instance in COBALT_INSTANCES:
-        try:
-            r = requests.post(
-                instance,
-                json={
-                    "url": yt_url,
-                    "downloadMode": "audio",
-                    "audioFormat": "best",
-                    "filenameStyle": "basic",
-                },
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0",
-                },
-                timeout=10,
-            )
+    headers = {
+        "X-RapidAPI-Key":  RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "youtube-mp36.p.rapidapi.com",
+    }
 
-            if r.status_code != 200:
-                logger.warning(f"Cobalt {instance} returned {r.status_code}: {r.text[:100]}")
-                continue
+    try:
+        # Step 1 — Request conversion
+        r = requests.get(
+            "https://youtube-mp36.p.rapidapi.com/dl",
+            params={"id": video_id},
+            headers=headers,
+            timeout=15,
+        )
 
-            data = r.json()
-            status = data.get("status")
-            url    = data.get("url")
+        if r.status_code != 200:
+            logger.error(f"RapidAPI status {r.status_code}: {r.text[:200]}")
+            return None
 
-            logger.info(f"Cobalt {instance} status={status} url={str(url)[:60]}")
+        data = r.json()
+        logger.info(f"RapidAPI response: {data}")
 
-            # stream / redirect / tunnel — all are directly usable by Alexa
-            if status in ("stream", "redirect", "tunnel") and url:
+        status = data.get("status")
+
+        # Already done
+        if status == "ok":
+            url = data.get("link")
+            if url:
+                logger.info(f"RapidAPI got URL immediately: {url[:60]}")
                 return url
 
-            # picker returns a list — grab the first audio item
-            if status == "picker":
-                for item in data.get("picker", []):
-                    if item.get("url"):
-                        return item["url"]
+        # Processing — poll up to 10 seconds
+        if status == "processing":
+            for attempt in range(5):
+                time.sleep(2)
+                r2 = requests.get(
+                    "https://youtube-mp36.p.rapidapi.com/dl",
+                    params={"id": video_id},
+                    headers=headers,
+                    timeout=15,
+                )
+                if r2.status_code == 200:
+                    d2 = r2.json()
+                    logger.info(f"Poll {attempt+1}: {d2}")
+                    if d2.get("status") == "ok":
+                        url = d2.get("link")
+                        if url:
+                            return url
+                else:
+                    logger.warning(f"Poll {attempt+1} failed: {r2.status_code}")
 
-        except Exception as e:
-            logger.warning(f"Cobalt {instance} error: {e}")
-            continue
+        logger.error(f"RapidAPI failed: {data}")
+        return None
 
-    logger.error("All Cobalt instances failed")
-    return None
+    except Exception as e:
+        logger.error(f"RapidAPI error: {e}")
+        return None
 
 
 def get_youtube_stream(query: str):
     """
     Returns (stream_url, title, None) or (None, None, None).
-    Flow: YouTube Data API v3 search → Cobalt stream extraction
+    Flow: YouTube Data API v3 search → RapidAPI MP3 extraction
     """
     video_id, title = _youtube_search(query)
     if not video_id:
         return None, None, None
 
-    url = _cobalt_stream(video_id)
+    url = _rapidapi_stream(video_id)
     if url:
         return url, title, None
 
-    logger.error(f"Cobalt failed for: {title} ({video_id})")
+    logger.error(f"RapidAPI failed for: {title} ({video_id})")
     return None, None, None
