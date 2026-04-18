@@ -1,5 +1,9 @@
 """
 api/index.py — Jarvis AI Alexa Skill (Vercel entry point)
+FIXES:
+  - FIX-1: Flask Response import conflict with ask_sdk_model.Response (aliased)
+  - FIX-2: AudioPlayer control handlers now return proper stop directives
+  - FIX-3: SessionEndedRequest handler properly handles error reason
 """
 
 import sys
@@ -7,13 +11,15 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
-from flask import Flask, request, jsonify, Response  # ← add Response
+# FIX-1: Alias Flask's Response so it isn't overwritten by ask_sdk_model's Response
+from flask import Flask, request, jsonify, Response as FlaskResponse
 from ask_sdk_core.skill_builder import SkillBuilder
 from ask_sdk_core.handler_input import HandlerInput
 from ask_sdk_core.utils import is_request_type, is_intent_name
-from ask_sdk_model import Response
+from ask_sdk_model import Response                          # Alexa response type
 from ask_sdk_model.interfaces.audioplayer import (
-    PlayDirective, PlayBehavior, AudioItem, Stream
+    PlayDirective, PlayBehavior, AudioItem, Stream,
+    StopDirective,                                         # FIX-2: needed for pause/stop
 )
 from ask_sdk_webservice_support.webservice_handler import WebserviceSkillHandler
 
@@ -32,12 +38,14 @@ ASSISTANT_NAME = os.environ.get("AssistantName", "Jarvis")
 app = Flask(__name__)
 sb  = SkillBuilder()
 
-# ── Health check ──────────────────────────────────────────────
+
+# ── Health check ───────────────────────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def health():
     return f"✅ {ASSISTANT_NAME} AI skill is running! Endpoint: /alexa"
 
-# ── Test music ────────────────────────────────────────────────
+
+# ── Test music ─────────────────────────────────────────────────────────────────
 @app.route("/test-music", methods=["GET"])
 def test_music():
     song = request.args.get("song", "Sahiba")
@@ -46,7 +54,8 @@ def test_music():
         return jsonify({"status": "ok", "title": title, "url": url})
     return jsonify({"status": "error", "message": "Stream not found"}), 500
 
-# ── Launch ────────────────────────────────────────────────────
+
+# ── Launch ─────────────────────────────────────────────────────────────────────
 @sb.request_handler(can_handle_func=is_request_type("LaunchRequest"))
 def launch_handler(handler_input: HandlerInput) -> Response:
     speech = f"Namaste {USERNAME}! Main {ASSISTANT_NAME} hoon. Kya seva kar sakta hoon?"
@@ -57,7 +66,8 @@ def launch_handler(handler_input: HandlerInput) -> Response:
         .response
     )
 
-# ── Music ─────────────────────────────────────────────────────
+
+# ── Music ──────────────────────────────────────────────────────────────────────
 @sb.request_handler(can_handle_func=is_intent_name("MusicPlayIntent"))
 def music_handler(handler_input: HandlerInput) -> Response:
     slots = handler_input.request_envelope.request.intent.slots
@@ -73,7 +83,8 @@ def music_handler(handler_input: HandlerInput) -> Response:
     if not stream_url:
         return (
             handler_input.response_builder
-            .speak(f"Sorry, {song} abhi nahi chal pa raha.")
+            .speak(f"Sorry {USERNAME}, {song} abhi nahi chal pa raha.")
+            .ask("Koi aur gana batao?")
             .response
         )
     return (
@@ -95,7 +106,8 @@ def music_handler(handler_input: HandlerInput) -> Response:
         .response
     )
 
-# ── Query ─────────────────────────────────────────────────────
+
+# ── Query ──────────────────────────────────────────────────────────────────────
 @sb.request_handler(can_handle_func=is_intent_name("QueryIntent"))
 def query_handler(handler_input: HandlerInput) -> Response:
     slots = handler_input.request_envelope.request.intent.slots
@@ -108,6 +120,7 @@ def query_handler(handler_input: HandlerInput) -> Response:
             .response
         )
 
+    # Automation check first
     auto = handle_automation(query.lower())
     if auto:
         return handler_input.response_builder.speak(auto).ask("Aur kuch?").response
@@ -138,11 +151,14 @@ def query_handler(handler_input: HandlerInput) -> Response:
                     .set_should_end_session(True)
                     .response
                 )
-            answer = f"Sorry, {song} nahi chal pa raha abhi."
+            answer = f"Sorry {USERNAME}, {song} nahi chal pa raha abhi."
+
         elif d.startswith("realtime "):
             answer = RealtimeSearchEngine(d.removeprefix("realtime ").strip())
+
         elif d.startswith("general "):
             answer = ChatBot(d.removeprefix("general ").strip())
+
         elif d == "exit":
             return (
                 handler_input.response_builder
@@ -150,6 +166,7 @@ def query_handler(handler_input: HandlerInput) -> Response:
                 .set_should_end_session(True)
                 .response
             )
+
         else:
             answer = ChatBot(query)
 
@@ -160,64 +177,100 @@ def query_handler(handler_input: HandlerInput) -> Response:
         .response
     )
 
-# ── Control intents ───────────────────────────────────────────
+
+# ── FIX-2: Control intents — proper directives ─────────────────────────────────
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.PauseIntent"))
-def pause_handler(handler_input):
-    return handler_input.response_builder.response
+def pause_handler(handler_input: HandlerInput) -> Response:
+    return (
+        handler_input.response_builder
+        .add_directive(StopDirective())
+        .response
+    )
 
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.ResumeIntent"))
-def resume_handler(handler_input):
+def resume_handler(handler_input: HandlerInput) -> Response:
+    # Alexa handles resume natively for AudioPlayer; just return empty
     return handler_input.response_builder.response
 
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.StopIntent"))
-def stop_handler(handler_input):
-    return handler_input.response_builder.response
+def stop_handler(handler_input: HandlerInput) -> Response:
+    return (
+        handler_input.response_builder
+        .add_directive(StopDirective())
+        .speak(f"Theek hai {USERNAME}, band kar raha hoon.")
+        .set_should_end_session(True)
+        .response
+    )
 
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.CancelIntent"))
-def cancel_handler(handler_input):
-    return handler_input.response_builder.response
+def cancel_handler(handler_input: HandlerInput) -> Response:
+    return (
+        handler_input.response_builder
+        .add_directive(StopDirective())
+        .set_should_end_session(True)
+        .response
+    )
 
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.HelpIntent"))
-def help_handler(handler_input):
-    return handler_input.response_builder.response
+def help_handler(handler_input: HandlerInput) -> Response:
+    speech = (
+        f"Main {ASSISTANT_NAME} hoon. Aap mujhse gana bajane, news sunne, "
+        "ya koi bhi sawaal poochh sakte hain. Bolo, kya madad chahiye?"
+    )
+    return (
+        handler_input.response_builder
+        .speak(speech)
+        .ask("Batao, kya help chahiye?")
+        .response
+    )
 
-# ── Session ended (REQUIRED) ──────────────────────────────────
+
+# ── FIX-3: Session ended — handle ERROR reason gracefully ──────────────────────
 @sb.request_handler(can_handle_func=is_request_type("SessionEndedRequest"))
-def session_ended_handler(handler_input):
+def session_ended_handler(handler_input: HandlerInput) -> Response:
+    reason = getattr(handler_input.request_envelope.request, "reason", None)
+    error  = getattr(handler_input.request_envelope.request, "error", None)
+    if error:
+        logger.error(f"SessionEnded reason={reason} error={error}")
     return handler_input.response_builder.response
 
-# ── AudioPlayer events ────────────────────────────────────────
+
+# ── AudioPlayer lifecycle events ───────────────────────────────────────────────
 @sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStarted"))
-def playback_started(handler_input):
+def playback_started(handler_input: HandlerInput) -> Response:
     return handler_input.response_builder.response
 
 @sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFinished"))
-def playback_finished(handler_input):
+def playback_finished(handler_input: HandlerInput) -> Response:
     return handler_input.response_builder.response
 
 @sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStopped"))
-def playback_stopped(handler_input):
+def playback_stopped(handler_input: HandlerInput) -> Response:
     return handler_input.response_builder.response
 
 @sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFailed"))
-def playback_failed(handler_input):
+def playback_failed(handler_input: HandlerInput) -> Response:
+    logger.error("AudioPlayer.PlaybackFailed received")
     return handler_input.response_builder.response
 
 @sb.request_handler(can_handle_func=is_request_type("PlaybackController.PlayCommandIssued"))
-def playback_command(handler_input):
+def playback_command(handler_input: HandlerInput) -> Response:
     return handler_input.response_builder.response
 
-# ── Error handler ─────────────────────────────────────────────
+
+# ── Error handler ──────────────────────────────────────────────────────────────
 @sb.exception_handler(can_handle_func=lambda i, e: True)
-def error_handler(handler_input, exception):
+def error_handler(handler_input: HandlerInput, exception: Exception) -> Response:
     logger.error(f"Alexa error: {exception}", exc_info=True)
     return (
         handler_input.response_builder
         .speak("Kuch gadbad ho gayi. Dobara try karein.")
+        .ask("Dobara boliye.")
         .response
     )
 
-# ── Alexa POST endpoint ───────────────────────────────────────
+
+# ── Alexa POST endpoint — FIX-1 applied: FlaskResponse instead of Response ─────
 skill_handler = WebserviceSkillHandler(
     skill=sb.create(),
     verify_signature=False,   # Vercel proxy mangles headers
@@ -231,11 +284,13 @@ def alexa_endpoint():
             http_headers=dict(request.headers),
             http_body=request.data.decode("utf-8"),
         )
-        return Response(response, content_type="application/json")  # ← fix
+        # FIX-1: Using FlaskResponse (aliased above) — not ask_sdk_model.Response
+        return FlaskResponse(response, content_type="application/json")
     except Exception as e:
         logger.error(f"Alexa endpoint error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# ── Vercel entry point ────────────────────────────────────────
+
+# ── Vercel entry point ─────────────────────────────────────────────────────────
 application = app
 handler     = app
