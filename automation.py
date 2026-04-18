@@ -1,6 +1,6 @@
 """
-automation.py  –  Jarvis Alexa Skill
-Voice-only automations. Desktop commands are gracefully declined.
+automation.py — Jarvis AI Alexa Skill
+Lazy Groq client init so import errors don't crash the whole app.
 """
 
 import os
@@ -15,7 +15,16 @@ GROQ_API_KEY   = os.environ.get("GroqAPIKey", "")
 USERNAME       = os.environ.get("Username", "Sir")
 ASSISTANT_NAME = os.environ.get("AssistantName", "Jarvis")
 
-client = Groq(api_key=GROQ_API_KEY)
+# FIX: lazy init
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        if not GROQ_API_KEY:
+            raise RuntimeError("GroqAPIKey environment variable is not set!")
+        _client = Groq(api_key=GROQ_API_KEY)
+    return _client
 
 
 def _google_search_spoken(topic: str) -> str:
@@ -51,6 +60,7 @@ def _content_writer(topic: str) -> str:
         "It will be read aloud by Alexa."
     )}]
     try:
+        client = _get_client()
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=system + [{"role": "user", "content": topic}],
@@ -108,4 +118,4 @@ def handle_automation(command: str) -> str | None:
     if command.startswith("generate image"):
         return _image_not_supported()
 
-    return None   # Not an automation command
+    return None
