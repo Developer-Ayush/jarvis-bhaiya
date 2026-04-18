@@ -65,7 +65,7 @@ def RealtimeSearchEngine(prompt: str) -> str:
 
     try:
         completion = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.1-8b-instant",
             messages=system_with_data + messages,
             temperature=0.7,
             max_tokens=300,
