@@ -1,0 +1,50 @@
+{
+  "manifest": {
+    "publishingInformation": {
+      "locales": {
+        "en-US": {
+          "name": "Bhaiya — Jarvis AI",
+          "summary": "Your personal AI assistant with ad-free music, real-time search, and full Hindi support.",
+          "description": "Jarvis AI lets you play any song ad-free from YouTube, ask questions using advanced AI, get real-time news, search Google and YouTube by voice, write content, and more. Say 'Alexa, Bhaiya' to start. Supports Hindi commands like 'sahiba gana chalado'.",
+          "examplePhrases": [
+            "Alexa, Bhaiya",
+            "Alexa, Bhaiya, Sahiba gana chalado",
+            "Alexa, Bhaiya, who is Virat Kohli"
+          ],
+          "keywords": ["AI", "assistant", "Jarvis", "music", "chatbot", "Hindi", "ad-free"]
+        }
+      },
+      "isAvailableWorldwide": false,
+      "testingInstructions": "Say 'Alexa, open Bhaiya' then 'Sahiba gana chalado'.",
+      "category": "MUSIC_AND_AUDIO",
+      "distributionCountries": ["US", "GB", "IN", "CA", "AU"]
+    },
+    "apis": {
+      "custom": {
+        "endpoint": {
+          "sourceDir": "lambda"
+        },
+        "interfaces": [
+          {
+            "type": "AUDIO_PLAYER"
+          }
+        ]
+      }
+    },
+    "manifestVersion": "1.0",
+    "permissions": [],
+    "privacyAndCompliance": {
+      "allowsPurchases": false,
+      "usesPersonalInfo": false,
+      "isChildDirected": false,
+      "isExportCompliant": true,
+      "containsAds": false,
+      "locales": {
+        "en-US": {
+          "privacyPolicyUrl": "",
+          "termsOfUseUrl": ""
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,198 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "bhaiya",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.PauseIntent",
+          "samples": [
+            "pause",
+            "ruko",
+            "band karo"
+          ]
+        },
+        {
+          "name": "AMAZON.ResumeIntent",
+          "samples": [
+            "resume",
+            "chalao",
+            "play karo"
+          ]
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "MusicPlayIntent",
+          "slots": [
+            {
+              "name": "song",
+              "type": "AMAZON.MusicRecording"
+            }
+          ],
+          "samples": [
+            "{song} gana chalado",
+            "{song} gana bajao",
+            "{song} bajado",
+            "{song} bajao",
+            "{song} lagao",
+            "{song} laga do",
+            "{song} sunao",
+            "{song} sun'na hai",
+            "{song} play karo",
+            "{song} gana laga do",
+            "{song} gana sunao",
+            "mujhe {song} sunao",
+            "mujhe {song} bajao",
+            "{song} wala gana chalao",
+            "{song} song chalao",
+            "{song} song bajao",
+            "play {song}",
+            "play {song} song",
+            "play the song {song}",
+            "{song} play",
+            "play me {song}",
+            "i want to listen to {song}",
+            "{song} song play karo",
+            "bhaiya {song} gana chalado",
+            "bhaiya {song} bajao",
+            "bhaiya play {song}",
+            "bhaiya {song} laga do",
+            "bhaiya {song} sunao"
+          ]
+        },
+        {
+          "name": "QueryIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "{query}",
+            "tell me {query}",
+            "what is {query}",
+            "who is {query}",
+            "how is {query}",
+            "search for {query}",
+            "find {query}",
+            "look up {query}",
+            "i want to know {query}",
+            "can you tell me {query}",
+            "search google for {query}",
+            "search youtube for {query}",
+            "write {query}",
+            "what are {query}",
+            "explain {query}",
+            "give me information about {query}",
+            "what's the latest on {query}",
+            "tell me about {query}",
+            "i need help with {query}",
+            "bata {query}",
+            "kya hai {query}",
+            "news kya hai {query}",
+            "aaj ka {query}",
+            "mujhe batao {query}",
+            "bhaiya {query}",
+            "bhaiya bata {query}",
+            "bhaiya kya hai {query}",
+            "bhaiya search karo {query}",
+            "bhaiya news do {query}"
+          ]
+        }
+      ],
+      "types": []
+    },
+    "dialog": {
+      "intents": [
+        {
+          "name": "MusicPlayIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": [
+            {
+              "name": "song",
+              "type": "AMAZON.MusicRecording",
+              "confirmationRequired": false,
+              "elicitationRequired": true,
+              "prompts": {
+                "elicitation": "Elicit.MusicPlayIntent.song"
+              }
+            }
+          ]
+        },
+        {
+          "name": "QueryIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery",
+              "confirmationRequired": false,
+              "elicitationRequired": true,
+              "prompts": {
+                "elicitation": "Elicit.QueryIntent.query"
+              }
+            }
+          ]
+        }
+      ],
+      "delegationStrategy": "SKILL_RESPONSE"
+    },
+    "prompts": [
+      {
+        "id": "Elicit.MusicPlayIntent.song",
+        "variations": [
+          {
+            "type": "PlainText",
+            "value": "Kaun sa gana bajana hai?"
+          },
+          {
+            "type": "PlainText",
+            "value": "Song ka naam batao."
+          },
+          {
+            "type": "PlainText",
+            "value": "Which song would you like?"
+          }
+        ]
+      },
+      {
+        "id": "Elicit.QueryIntent.query",
+        "variations": [
+          {
+            "type": "PlainText",
+            "value": "Haan bolo, main sun raha hoon."
+          },
+          {
+            "type": "PlainText",
+            "value": "Kya jaanna chahte hain?"
+          },
+          {
+            "type": "PlainText",
+            "value": "Batao, kya help chahiye?"
+          }
+        ]
+      }
+    ]
+  }
+}
