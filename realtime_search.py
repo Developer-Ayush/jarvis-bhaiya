@@ -1,6 +1,6 @@
 """
-realtime_search.py  –  Jarvis Alexa Skill
-Google search → Groq → concise spoken answer.
+realtime_search.py — Jarvis AI Alexa Skill
+Lazy Groq client init so import errors don't crash the whole app.
 """
 
 import datetime
@@ -15,7 +15,16 @@ USERNAME       = os.environ.get("Username", "Sir")
 ASSISTANT_NAME = os.environ.get("AssistantName", "Jarvis")
 GROQ_API_KEY   = os.environ.get("GroqAPIKey", "")
 
-client = Groq(api_key=GROQ_API_KEY)
+# FIX: lazy init
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        if not GROQ_API_KEY:
+            raise RuntimeError("GroqAPIKey environment variable is not set!")
+        _client = Groq(api_key=GROQ_API_KEY)
+    return _client
 
 SYSTEM_PROMPT = f"""You are {ASSISTANT_NAME}, an advanced AI assistant.
 Answer ONLY from the search data provided.
@@ -64,6 +73,7 @@ def RealtimeSearchEngine(prompt: str) -> str:
     ]
 
     try:
+        client = _get_client()
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=system_with_data + messages,
