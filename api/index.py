@@ -388,9 +388,28 @@ def alexa_endpoint():
 
 @app.route("/", methods=["GET"])
 def health():
-    """Health check — open this URL to confirm deployment is live."""
-    return f"✅ {ASSISTANT_NAME} AI skill is running on Vercel! Endpoint: /alexa", 200
+    errors = []
+    try:
+        from chatbot import ChatBot
+    except Exception as e:
+        errors.append(f"chatbot: {e}")
+    try:
+        from realtime_search import RealtimeSearchEngine
+    except Exception as e:
+        errors.append(f"realtime_search: {e}")
+    try:
+        from model import FirstLayerDMM
+    except Exception as e:
+        errors.append(f"model: {e}")
+    try:
+        from automation import handle_automation
+    except Exception as e:
+        errors.append(f"automation: {e}")
+    try:
+        from music_player import get_youtube_stream
+    except Exception as e:
+        errors.append(f"music_player: {e}")
 
-
-# Vercel needs the app object exposed
-# (Vercel auto-detects Flask apps)
+    if errors:
+        return "<br>".join(errors), 500
+    return f"✅ {ASSISTANT_NAME} running! Endpoint: /alexa", 200
