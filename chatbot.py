@@ -1,7 +1,6 @@
 """
-chatbot.py  –  Jarvis Alexa Skill
-Stateless Groq LLM wrapper.  All responses are plain text;
-Matthew SSML wrapping is done in lambda_function.py.
+chatbot.py — Jarvis AI Alexa Skill
+Lazy Groq client init so import errors don't crash the whole app.
 """
 
 import datetime
@@ -15,7 +14,16 @@ USERNAME       = os.environ.get("Username", "Sir")
 ASSISTANT_NAME = os.environ.get("AssistantName", "Jarvis")
 GROQ_API_KEY   = os.environ.get("GroqAPIKey", "")
 
-client = Groq(api_key=GROQ_API_KEY)
+# FIX: lazy init
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        if not GROQ_API_KEY:
+            raise RuntimeError("GroqAPIKey environment variable is not set!")
+        _client = Groq(api_key=GROQ_API_KEY)
+    return _client
 
 SYSTEM_PROMPT = f"""Hello, I am {USERNAME}.
 You are {ASSISTANT_NAME}, an advanced AI assistant.
@@ -31,7 +39,7 @@ _session_messages: list = []
 
 def _now_info() -> str:
     n = datetime.datetime.now()
-    return (f"Current time info: {n.strftime('%A, %d %B %Y, %H:%M:%S')}.")
+    return f"Current time info: {n.strftime('%A, %d %B %Y, %H:%M:%S')}."
 
 
 def _clean(text: str) -> str:
@@ -49,6 +57,7 @@ def ChatBot(query: str) -> str:
     ]
 
     try:
+        client = _get_client()
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=system + _session_messages,
@@ -66,7 +75,6 @@ def ChatBot(query: str) -> str:
         answer = _clean(answer)
         _session_messages.append({"role": "assistant", "content": answer})
 
-        # Keep memory bounded (last 10 turns)
         if len(_session_messages) > 20:
             _session_messages = _session_messages[-20:]
 
