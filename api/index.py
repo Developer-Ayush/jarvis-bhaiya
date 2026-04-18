@@ -3,7 +3,10 @@ api/index.py — Jarvis AI Alexa Skill (Vercel entry point)
 Uses Piped API for music — no yt-dlp needed.
 """
 
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import logging
 
 from flask import Flask, request, jsonify
@@ -20,7 +23,7 @@ from chatbot import ChatBot
 from model import FirstLayerDMM
 from realtime_search import RealtimeSearchEngine
 from automation import handle_automation
-from music_player import get_youtube_stream   # ← Piped-based, no yt-dlp
+from music_player import get_youtube_stream
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -62,11 +65,20 @@ def music_handler(handler_input: HandlerInput) -> Response:
     slots = handler_input.request_envelope.request.intent.slots
     song  = slots["song"].value if slots.get("song") else None
     if not song:
-        return handler_input.response_builder.speak("Kaun sa gana bajana hai?").ask("Song ka naam batao.").response
+        return (
+            handler_input.response_builder
+            .speak("Kaun sa gana bajana hai?")
+            .ask("Song ka naam batao.")
+            .response
+        )
 
     stream_url, title, _ = get_youtube_stream(song)
     if not stream_url:
-        return handler_input.response_builder.speak(f"Sorry, {song} abhi nahi chal pa raha.").response
+        return (
+            handler_input.response_builder
+            .speak(f"Sorry, {song} abhi nahi chal pa raha.")
+            .response
+        )
 
     return (
         handler_input.response_builder
@@ -75,7 +87,11 @@ def music_handler(handler_input: HandlerInput) -> Response:
             PlayDirective(
                 play_behavior=PlayBehavior.REPLACE_ALL,
                 audio_item=AudioItem(
-                    stream=Stream(token=title, url=stream_url, offset_in_milliseconds=0)
+                    stream=Stream(
+                        token=title,
+                        url=stream_url,
+                        offset_in_milliseconds=0,
+                    )
                 ),
             )
         )
@@ -89,12 +105,24 @@ def query_handler(handler_input: HandlerInput) -> Response:
     slots = handler_input.request_envelope.request.intent.slots
     query = slots["query"].value if slots.get("query") else None
     if not query:
-        return handler_input.response_builder.speak("Kya jaanna chahte hain?").ask("Batao.").response
+        return (
+            handler_input.response_builder
+            .speak("Kya jaanna chahte hain?")
+            .ask("Batao.")
+            .response
+        )
 
+    # Automation check first
     auto = handle_automation(query.lower())
     if auto:
-        return handler_input.response_builder.speak(auto).ask("Aur kuch?").response
+        return (
+            handler_input.response_builder
+            .speak(auto)
+            .ask("Aur kuch?")
+            .response
+        )
 
+    # Decision model
     decisions = FirstLayerDMM(query)
     answer = ""
 
@@ -110,7 +138,11 @@ def query_handler(handler_input: HandlerInput) -> Response:
                         PlayDirective(
                             play_behavior=PlayBehavior.REPLACE_ALL,
                             audio_item=AudioItem(
-                                stream=Stream(token=title, url=stream_url, offset_in_milliseconds=0)
+                                stream=Stream(
+                                    token=title,
+                                    url=stream_url,
+                                    offset_in_milliseconds=0,
+                                )
                             ),
                         )
                     )
@@ -118,18 +150,32 @@ def query_handler(handler_input: HandlerInput) -> Response:
                     .response
                 )
             answer = f"Sorry, {song} nahi chal pa raha abhi."
+
         elif d.startswith("realtime "):
             answer = RealtimeSearchEngine(d.removeprefix("realtime ").strip())
+
         elif d.startswith("general "):
             answer = ChatBot(d.removeprefix("general ").strip())
+
         elif d == "exit":
-            return handler_input.response_builder.speak(f"Alvida {USERNAME}!").set_should_end_session(True).response
+            return (
+                handler_input.response_builder
+                .speak(f"Alvida {USERNAME}! Take care.")
+                .set_should_end_session(True)
+                .response
+            )
+
         else:
             answer = ChatBot(query)
 
-    return handler_input.response_builder.speak(answer or "Samajh nahi aaya, dobara boliye.").ask("Aur kuch?").response
+    return (
+        handler_input.response_builder
+        .speak(answer or "Samajh nahi aaya, dobara boliye.")
+        .ask("Aur kuch?")
+        .response
+    )
 
-# ── AudioPlayer stubs (Alexa requires these) ──────────────────
+# ── AudioPlayer stubs (Alexa REQUIRES these handlers) ─────────
 @sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStarted"))
 @sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFinished"))
 @sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStopped"))
@@ -146,12 +192,17 @@ def audioplayer_stub(handler_input):
 def control_stub(handler_input):
     return handler_input.response_builder.response
 
+# ── Error handler ─────────────────────────────────────────────
 @sb.exception_handler(can_handle_func=lambda i, e: True)
 def error_handler(handler_input, exception):
     logger.error(f"Alexa error: {exception}", exc_info=True)
-    return handler_input.response_builder.speak("Kuch gadbad ho gayi. Dobara try karein.").response
+    return (
+        handler_input.response_builder
+        .speak("Kuch gadbad ho gayi. Dobara try karein.")
+        .response
+    )
 
-# ── Alexa endpoint ────────────────────────────────────────────
+# ── Alexa POST endpoint ───────────────────────────────────────
 skill_handler = WebserviceSkillHandler(skill=sb.create())
 
 @app.route("/alexa", methods=["POST"])
