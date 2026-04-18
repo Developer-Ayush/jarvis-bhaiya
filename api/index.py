@@ -1,6 +1,5 @@
 """
 api/index.py — Jarvis AI Alexa Skill (Vercel entry point)
-Uses Piped API for music — no yt-dlp needed.
 """
 
 import sys
@@ -8,7 +7,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
-
 from flask import Flask, request, jsonify
 from ask_sdk_core.skill_builder import SkillBuilder
 from ask_sdk_core.handler_input import HandlerInput
@@ -37,9 +35,9 @@ sb  = SkillBuilder()
 # ── Health check ──────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def health():
-    return f"✅ {ASSISTANT_NAME} AI skill is running on Vercel! Endpoint: /alexa"
+    return f"✅ {ASSISTANT_NAME} AI skill is running! Endpoint: /alexa"
 
-# ── Test music endpoint ───────────────────────────────────────
+# ── Test music ────────────────────────────────────────────────
 @app.route("/test-music", methods=["GET"])
 def test_music():
     song = request.args.get("song", "Sahiba")
@@ -71,7 +69,6 @@ def music_handler(handler_input: HandlerInput) -> Response:
             .ask("Song ka naam batao.")
             .response
         )
-
     stream_url, title, _ = get_youtube_stream(song)
     if not stream_url:
         return (
@@ -79,7 +76,6 @@ def music_handler(handler_input: HandlerInput) -> Response:
             .speak(f"Sorry, {song} abhi nahi chal pa raha.")
             .response
         )
-
     return (
         handler_input.response_builder
         .speak(f"Bajata hoon {title}.")
@@ -87,11 +83,7 @@ def music_handler(handler_input: HandlerInput) -> Response:
             PlayDirective(
                 play_behavior=PlayBehavior.REPLACE_ALL,
                 audio_item=AudioItem(
-                    stream=Stream(
-                        token=title,
-                        url=stream_url,
-                        offset_in_milliseconds=0,
-                    )
+                    stream=Stream(token=title, url=stream_url, offset_in_milliseconds=0)
                 ),
             )
         )
@@ -112,17 +104,10 @@ def query_handler(handler_input: HandlerInput) -> Response:
             .response
         )
 
-    # Automation check first
     auto = handle_automation(query.lower())
     if auto:
-        return (
-            handler_input.response_builder
-            .speak(auto)
-            .ask("Aur kuch?")
-            .response
-        )
+        return handler_input.response_builder.speak(auto).ask("Aur kuch?").response
 
-    # Decision model
     decisions = FirstLayerDMM(query)
     answer = ""
 
@@ -138,11 +123,7 @@ def query_handler(handler_input: HandlerInput) -> Response:
                         PlayDirective(
                             play_behavior=PlayBehavior.REPLACE_ALL,
                             audio_item=AudioItem(
-                                stream=Stream(
-                                    token=title,
-                                    url=stream_url,
-                                    offset_in_milliseconds=0,
-                                )
+                                stream=Stream(token=title, url=stream_url, offset_in_milliseconds=0)
                             ),
                         )
                     )
@@ -150,13 +131,10 @@ def query_handler(handler_input: HandlerInput) -> Response:
                     .response
                 )
             answer = f"Sorry, {song} nahi chal pa raha abhi."
-
         elif d.startswith("realtime "):
             answer = RealtimeSearchEngine(d.removeprefix("realtime ").strip())
-
         elif d.startswith("general "):
             answer = ChatBot(d.removeprefix("general ").strip())
-
         elif d == "exit":
             return (
                 handler_input.response_builder
@@ -164,7 +142,6 @@ def query_handler(handler_input: HandlerInput) -> Response:
                 .set_should_end_session(True)
                 .response
             )
-
         else:
             answer = ChatBot(query)
 
@@ -175,21 +152,46 @@ def query_handler(handler_input: HandlerInput) -> Response:
         .response
     )
 
-# ── AudioPlayer stubs (Alexa REQUIRES these handlers) ─────────
-@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStarted"))
-@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFinished"))
-@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStopped"))
-@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFailed"))
-@sb.request_handler(can_handle_func=is_request_type("PlaybackController.PlayCommandIssued"))
-def audioplayer_stub(handler_input):
+# ── Control intents (each needs its own function!) ────────────
+@sb.request_handler(can_handle_func=is_intent_name("AMAZON.PauseIntent"))
+def pause_handler(handler_input):
     return handler_input.response_builder.response
 
-@sb.request_handler(can_handle_func=is_intent_name("AMAZON.PauseIntent"))
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.ResumeIntent"))
+def resume_handler(handler_input):
+    return handler_input.response_builder.response
+
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.StopIntent"))
+def stop_handler(handler_input):
+    return handler_input.response_builder.response
+
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.CancelIntent"))
+def cancel_handler(handler_input):
+    return handler_input.response_builder.response
+
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.HelpIntent"))
-def control_stub(handler_input):
+def help_handler(handler_input):
+    return handler_input.response_builder.response
+
+# ── AudioPlayer events (each needs its own function!) ─────────
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStarted"))
+def playback_started(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFinished"))
+def playback_finished(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStopped"))
+def playback_stopped(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFailed"))
+def playback_failed(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("PlaybackController.PlayCommandIssued"))
+def playback_command(handler_input):
     return handler_input.response_builder.response
 
 # ── Error handler ─────────────────────────────────────────────
