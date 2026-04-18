@@ -1,7 +1,6 @@
 """
-model.py  –  Jarvis Alexa Skill
-Cohere command-r-plus decision model.
-Updated preamble includes Hindi music commands.
+model.py — Jarvis AI Alexa Skill
+Lazy Cohere client init so import errors don't crash the whole app.
 """
 
 import os
@@ -11,7 +10,17 @@ import cohere
 logger = logging.getLogger(__name__)
 
 COHERE_API_KEY = os.environ.get("CohereApiKey", "")
-co = cohere.Client(api_key=COHERE_API_KEY)
+
+# FIX: lazy init — don't crash at import if key is missing/invalid
+_co = None
+
+def _get_client():
+    global _co
+    if _co is None:
+        if not COHERE_API_KEY:
+            raise RuntimeError("CohereApiKey environment variable is not set!")
+        _co = cohere.Client(api_key=COHERE_API_KEY)
+    return _co
 
 FUNCS = [
     "exit", "general", "realtime", "play",
@@ -28,9 +37,9 @@ Categories:
 -> 'realtime (query)'       — needs current internet data (news, prices, who is X right now, etc.).
 -> 'play (song name)'       — user wants to play/listen to a song. Also triggered by Hindi phrases:
                               'gana chalado', 'bajao', 'sunao', 'lagao', 'play karo', 'gana laga do'.
-                              Example: 'Sahiba gana chalado' → 'play Sahiba'
-                              Example: 'Tum Hi Ho bajao' → 'play Tum Hi Ho'
-                              Example: 'play Shape of You' → 'play Shape of You'
+                              Example: 'Sahiba gana chalado' -> 'play Sahiba'
+                              Example: 'Tum Hi Ho bajao' -> 'play Tum Hi Ho'
+                              Example: 'play Shape of You' -> 'play Shape of You'
 -> 'google search (topic)'  — user wants to search Google.
 -> 'youtube search (topic)' — user wants to search YouTube (NOT play, just search).
 -> 'content (topic)'        — user wants written content: essay, email, code, poem, etc.
@@ -69,6 +78,7 @@ CHAT_HISTORY = [
 
 def FirstLayerDMM(prompt: str) -> list:
     try:
+        co = _get_client()
         stream = co.chat_stream(
             model="command-r7b",
             message=prompt,
