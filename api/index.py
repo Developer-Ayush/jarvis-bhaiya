@@ -1,209 +1,232 @@
-"""
-api/index.py  —  Jarvis AI Alexa Skill
-"""
-
 import sys
 import os
+import logging
+import json
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from flask import Flask, request, jsonify
-from ask_sdk_core.skill_builder import CustomSkillBuilder
-from ask_sdk_core.api_client import DefaultApiClient
-from ask_sdk_webservice_support.webservice_handler import WebserviceSkillHandler
-from ask_sdk_core.dispatch_components import AbstractRequestHandler, AbstractExceptionHandler
-from ask_sdk_core.utils import is_request_type, is_intent_name
-from ask_sdk_core.handler_input import HandlerInput
-from ask_sdk_model import Response
-from ask_sdk_model.interfaces.audioplayer import (
-    PlayDirective, PlayBehavior, AudioItem,
-    Stream, AudioItemMetadata, StopDirective,
-)
 
 app = Flask(__name__)
 
-ASSISTANT_NAME = os.environ.get("AssistantName", "Jarvis")
+ASSISTANT_NAME = os.environ.get("AssistantName", "Bhaiya")
 USERNAME       = os.environ.get("Username", "Sir")
+GROQ_KEY       = os.environ.get("GroqAPIKey", "")
+COHERE_KEY     = os.environ.get("CohereApiKey", "")
 
-# ─────────────────────────────────────────────
+
 def matthew(text: str) -> str:
     text = text.replace("&", "and").replace("<", "").replace(">", "")
-    return f'<speak>{text}</speak>'
+    return f'<speak><voice name="Matthew">{text}</voice></speak>'
 
-def sanitise(text: str) -> str:
+
+def _build_response(text, end_session, reprompt=None, directives=None):
+    response = {
+        "outputSpeech": {"type": "SSML", "ssml": matthew(text)},
+        "shouldEndSession": end_session
+    }
+    if reprompt:
+        response["reprompt"] = {
+            "outputSpeech": {"type": "SSML", "ssml": matthew(reprompt)}
+        }
+    if directives:
+        response["directives"] = directives
+    return jsonify({"version": "1.0", "response": response}), 200
+
+
+def _build_audio_response(speak_text, stream_url, title):
+    return jsonify({
+        "version": "1.0",
+        "response": {
+            "outputSpeech": {"type": "SSML", "ssml": matthew(speak_text)},
+            "directives": [{
+                "type": "AudioPlayer.Play",
+                "playBehavior": "REPLACE_ALL",
+                "audioItem": {
+                    "stream": {
+                        "token": f"jarvis::{title}",
+                        "url": stream_url,
+                        "offsetInMilliseconds": 0
+                    },
+                    "metadata": {
+                        "title": title,
+                        "subtitle": f"{ASSISTANT_NAME} AI — Ad Free"
+                    }
+                }
+            }],
+            "shouldEndSession": True
+        }
+    }), 200
+
+
+def _process_decision(decision, original_query):
     import re
-    text = re.sub(r"\*+", "", text)
-    text = re.sub(r"#+\s*", "", text)
-    text = re.sub(r"\[.*?\]\(.*?\)", "", text)
-    text = re.sub(r"`+", "", text)
-    return text.replace("</s>", "").strip()[:7500]
-
-def process_decision(decision: list, original_query: str):
-    # Import only when actually needed
-    from model import FirstLayerDMM
-    from chatbot import ChatBot
-    from realtime_search import RealtimeSearchEngine
-    from automation import handle_automation
-    from music_player import get_youtube_stream
+    def clean(text):
+        text = re.sub(r"\*+", "", text)
+        text = re.sub(r"#+\s*", "", text)
+        text = re.sub(r"`+", "", text)
+        return text.replace("</s>", "").strip()[:7000]
 
     R = any(i.startswith("realtime") for i in decision)
     merged = " and ".join(
         [" ".join(i.split()[1:]) for i in decision
          if i.startswith("general") or i.startswith("realtime")]
     )
+
     for d in decision:
         if d.startswith("play "):
             song = d.removeprefix("play ").strip()
+            from music_player import get_youtube_stream
             url, title, _ = get_youtube_stream(song)
             if url:
-                return f"Playing {title} for you {USERNAME}. Enjoy!", url
-            return f"Sorry {USERNAME}, could not find {song}. Try another song.", None
-    auto_funcs = ["google search", "youtube search", "content", "reminder"]
-    auto_lines = []
+                return f"Playing {title} for you {USERNAME}!", url
+            return f"Sorry {USERNAME}, {song} nahi mila.", None
+
+    auto_keys = ["google search", "youtube search", "content", "reminder"]
     for d in decision:
-        if any(d.startswith(f) for f in auto_funcs):
-            r = handle_automation(d)
-            if r:
-                auto_lines.append(r)
+        if any(d.startswith(k) for k in auto_keys):
+            from automation import handle_automation
+            result = handle_automation(d)
+            if result:
+                return clean(result), None
+
     if R:
-        return sanitise(RealtimeSearchEngine(merged or original_query)), None
+        from realtime_search import RealtimeSearchEngine
+        return clean(RealtimeSearchEngine(merged or original_query)), None
+
     for d in decision:
         if d.startswith("general "):
-            return sanitise(ChatBot(d.replace("general ", "").strip())), None
+            from chatbot import ChatBot
+            return clean(ChatBot(d.replace("general ", "").strip())), None
+
     for d in decision:
         if d == "exit":
-            return f"Goodbye {USERNAME}, have a great day!", None
-    if auto_lines:
-        return " ".join(auto_lines), None
-    return sanitise(ChatBot(original_query)), None
+            return f"Goodbye {USERNAME}!", None
 
-# ─────────────────────────────────────────────
-class LaunchRequestHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return is_request_type("LaunchRequest")(handler_input)
-    def handle(self, handler_input):
-        speak = matthew(f"Haan {USERNAME}! Main {ASSISTANT_NAME} hoon. Batao kya karna hai?")
-        return handler_input.response_builder.speak(speak).ask(matthew("Haan bolo.")).response
+    from chatbot import ChatBot
+    return clean(ChatBot(original_query)), None
 
-class MusicPlayIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return is_intent_name("MusicPlayIntent")(handler_input)
-    def handle(self, handler_input):
-        from music_player import get_youtube_stream
-        slots = handler_input.request_envelope.request.intent.slots
-        song_slot = slots.get("song") if slots else None
-        song = song_slot.value.strip() if song_slot and song_slot.value else None
-        if not song:
-            return handler_input.response_builder.speak(matthew("Kaun sa gana bajana hai?")).ask(matthew("Song ka naam batao.")).response
-        url, title, _ = get_youtube_stream(song)
-        if not url:
-            return handler_input.response_builder.speak(matthew(f"Sorry {USERNAME}, {song} nahi mila.")).ask(matthew("Koi aur gana batao?")).response
-        return (handler_input.response_builder
-            .speak(matthew(f"Suno {USERNAME}, {title}!"))
-            .add_directive(PlayDirective(
-                play_behavior=PlayBehavior.REPLACE_ALL,
-                audio_item=AudioItem(
-                    stream=Stream(token=f"jarvis::{title}", url=url, offset_in_milliseconds=0),
-                    metadata=AudioItemMetadata(title=title, subtitle=f"{ASSISTANT_NAME} AI — Ad Free"),
-                ),
-            ))
-            .set_should_end_session(True).response)
-
-class QueryIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return is_intent_name("QueryIntent")(handler_input)
-    def handle(self, handler_input):
-        from model import FirstLayerDMM
-        slots = handler_input.request_envelope.request.intent.slots
-        q_slot = slots.get("query") if slots else None
-        query = q_slot.value.strip() if q_slot and q_slot.value else None
-        if not query:
-            return handler_input.response_builder.speak(matthew("Samjha nahi. Dobara poochho.")).ask(matthew("Kya poochna tha?")).response
-        try:
-            decision = FirstLayerDMM(query)
-            spoken, audio_url = process_decision(decision, query)
-        except Exception as e:
-            spoken, audio_url = "Kuch problem ho gayi. Dobara try karo.", None
-        if audio_url:
-            return (handler_input.response_builder
-                .speak(matthew(spoken))
-                .add_directive(PlayDirective(
-                    play_behavior=PlayBehavior.REPLACE_ALL,
-                    audio_item=AudioItem(
-                        stream=Stream(token=f"jarvis::{query}", url=audio_url, offset_in_milliseconds=0),
-                        metadata=AudioItemMetadata(title=query, subtitle=f"{ASSISTANT_NAME} AI"),
-                    ),
-                ))
-                .set_should_end_session(True).response)
-        return handler_input.response_builder.speak(matthew(spoken)).ask(matthew("Aur kuch?")).response
-
-class PauseIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input): return is_intent_name("AMAZON.PauseIntent")(handler_input)
-    def handle(self, handler_input): return handler_input.response_builder.add_directive(StopDirective()).response
-
-class ResumeIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input): return is_intent_name("AMAZON.ResumeIntent")(handler_input)
-    def handle(self, handler_input): return handler_input.response_builder.response
-
-class StopIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input):
-        return is_intent_name("AMAZON.StopIntent")(handler_input) or is_intent_name("AMAZON.CancelIntent")(handler_input)
-    def handle(self, handler_input):
-        return handler_input.response_builder.speak(matthew(f"Theek hai {USERNAME}, phir milenge!")).add_directive(StopDirective()).response
-
-class HelpIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input): return is_intent_name("AMAZON.HelpIntent")(handler_input)
-    def handle(self, handler_input):
-        return handler_input.response_builder.speak(matthew(f"Main {ASSISTANT_NAME} hoon. Gana sunna ho toh song name ke baad gana chalado kaho.")).ask(matthew("Batao kya karna hai?")).response
-
-class FallbackIntentHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input): return is_intent_name("AMAZON.FallbackIntent")(handler_input)
-    def handle(self, handler_input):
-        return handler_input.response_builder.speak(matthew("Samjha nahi.")).ask(matthew("Kya poochna tha?")).response
-
-class AudioPlayerHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input): return handler_input.request_envelope.request.object_type.startswith("AudioPlayer.")
-    def handle(self, handler_input): return handler_input.response_builder.response
-
-class PlaybackControllerHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input): return handler_input.request_envelope.request.object_type.startswith("PlaybackController.")
-    def handle(self, handler_input): return handler_input.response_builder.response
-
-class SessionEndedHandler(AbstractRequestHandler):
-    def can_handle(self, handler_input): return is_request_type("SessionEndedRequest")(handler_input)
-    def handle(self, handler_input): return handler_input.response_builder.response
-
-class CatchAllExceptionHandler(AbstractExceptionHandler):
-    def can_handle(self, handler_input, exception): return True
-    def handle(self, handler_input, exception):
-        return handler_input.response_builder.speak(matthew("Kuch gadbad ho gayi. Dobara try karo.")).ask(matthew("Dobara try karo.")).response
-
-# ─────────────────────────────────────────────
-sb = CustomSkillBuilder(api_client=DefaultApiClient())
-sb.add_request_handler(LaunchRequestHandler())
-sb.add_request_handler(MusicPlayIntentHandler())
-sb.add_request_handler(QueryIntentHandler())
-sb.add_request_handler(PauseIntentHandler())
-sb.add_request_handler(ResumeIntentHandler())
-sb.add_request_handler(StopIntentHandler())
-sb.add_request_handler(HelpIntentHandler())
-sb.add_request_handler(FallbackIntentHandler())
-sb.add_request_handler(AudioPlayerHandler())
-sb.add_request_handler(PlaybackControllerHandler())
-sb.add_request_handler(SessionEndedHandler())
-sb.add_exception_handler(CatchAllExceptionHandler())
-skill = sb.create()
-
-# ─────────────────────────────────────────────
-@app.route("/alexa", methods=["POST"])
-def alexa_endpoint():
-    handler = WebserviceSkillHandler(skill=skill, verify_signature=False, verify_timestamp=False)
-    response = handler.verify_request_and_dispatch(
-        http_api_headers=dict(request.headers),
-        http_api_body=request.data.decode("utf-8"),
-    )
-    return jsonify(response)
 
 @app.route("/", methods=["GET"])
 def health():
-    return f"✅ {ASSISTANT_NAME} AI skill is running on Vercel! Endpoint: /alexa", 200
+    return jsonify({
+        "status": "running",
+        "assistant": ASSISTANT_NAME,
+        "groq_key_set": bool(GROQ_KEY),
+        "cohere_key_set": bool(COHERE_KEY),
+        "endpoint": "/alexa"
+    }), 200
+
+
+@app.route("/alexa", methods=["POST"])
+def alexa_endpoint():
+    try:
+        data = json.loads(request.data.decode("utf-8"))
+        request_type = data.get("request", {}).get("type", "")
+        intent_name  = data.get("request", {}).get("intent", {}).get("name", "")
+        logger.info(f"Type: {request_type} | Intent: {intent_name}")
+
+        if request_type == "LaunchRequest":
+            return _build_response(
+                f"Haan {USERNAME}! Main {ASSISTANT_NAME} hoon. "
+                "Gana sunna ho toh song ka naam ke baad gana chalado kaho. "
+                "Koi sawaal ho toh seedha pooch lo. Batao kya karna hai?",
+                end_session=False,
+                reprompt="Haan bolo."
+            )
+
+        elif request_type == "IntentRequest":
+
+            if intent_name == "MusicPlayIntent":
+                slots = data["request"]["intent"].get("slots", {})
+                song  = slots.get("song", {}).get("value", "")
+                if not song:
+                    return _build_response(
+                        "Kaun sa gana bajana hai?",
+                        end_session=False,
+                        reprompt="Song ka naam batao."
+                    )
+                from music_player import get_youtube_stream
+                url, title, _ = get_youtube_stream(song)
+                if url:
+                    return _build_audio_response(f"Suno {USERNAME}, {title}!", url, title)
+                return _build_response(
+                    f"Sorry {USERNAME}, {song} nahi mila. Koi aur try karo.",
+                    end_session=False, reprompt="Koi aur gana batao?"
+                )
+
+            elif intent_name == "QueryIntent":
+                slots = data["request"]["intent"].get("slots", {})
+                query = slots.get("query", {}).get("value", "")
+                if not query:
+                    return _build_response(
+                        "Samjha nahi. Dobara poochho.",
+                        end_session=False, reprompt="Kya poochna tha?"
+                    )
+                from model import FirstLayerDMM
+                decision = FirstLayerDMM(query)
+                logger.info(f"Decision: {decision}")
+                spoken, audio_url = _process_decision(decision, query)
+                if audio_url:
+                    return _build_audio_response(spoken, audio_url, query)
+                return _build_response(spoken, end_session=False, reprompt="Aur kuch?")
+
+            elif intent_name == "AMAZON.PauseIntent":
+                return jsonify({
+                    "version": "1.0",
+                    "response": {
+                        "directives": [{"type": "AudioPlayer.Stop"}],
+                        "shouldEndSession": True
+                    }
+                }), 200
+
+            elif intent_name == "AMAZON.ResumeIntent":
+                return jsonify({"version": "1.0", "response": {}}), 200
+
+            elif intent_name in ("AMAZON.StopIntent", "AMAZON.CancelIntent"):
+                return _build_response(
+                    f"Theek hai {USERNAME}, phir milenge!",
+                    end_session=True,
+                    directives=[{"type": "AudioPlayer.Stop"}]
+                )
+
+            elif intent_name == "AMAZON.HelpIntent":
+                return _build_response(
+                    f"Main {ASSISTANT_NAME} hoon. "
+                    "Gana sunna ho toh song ke baad gana chalado kaho. "
+                    "Koi sawaal pooch sakte ho. "
+                    "News ke liye kaho aaj ka news kya hai. "
+                    f"Try karo: Sahiba gana chalado. Batao {USERNAME}?",
+                    end_session=False, reprompt="Batao kya karna hai?"
+                )
+
+            else:
+                return _build_response(
+                    "Samjha nahi. Help bolne ke liye kaho help.",
+                    end_session=False, reprompt="Kya poochna tha?"
+                )
+
+        elif request_type == "SessionEndedRequest":
+            return jsonify({"version": "1.0", "response": {}}), 200
+
+        elif request_type.startswith("AudioPlayer.") or \
+             request_type.startswith("PlaybackController."):
+            return jsonify({"version": "1.0", "response": {}}), 200
+
+        else:
+            return _build_response(
+                "Kuch samjha nahi. Dobara try karo.",
+                end_session=False
+            )
+
+    except Exception as exc:
+        logger.error(f"Error: {exc}", exc_info=True)
+        return _build_response(
+            f"Kuch gadbad ho gayi {USERNAME}. Dobara try karo.",
+            end_session=False
+        )
