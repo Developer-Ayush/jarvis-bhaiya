@@ -50,7 +50,7 @@ def ChatBot(query: str) -> str:
 
     try:
         completion = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.1-8b-instant",
             messages=system + _session_messages,
             max_tokens=300,
             temperature=0.7,
