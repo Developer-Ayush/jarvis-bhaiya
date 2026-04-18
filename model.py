@@ -11,7 +11,7 @@ import cohere
 logger = logging.getLogger(__name__)
 
 COHERE_API_KEY = os.environ.get("CohereApiKey", "")
-co = cohere.Client(api_key=COHERE_API_KEY)
+co = cohere.ClientV2(api_key=COHERE_API_KEY)
 
 FUNCS = [
     "exit", "general", "realtime", "play",
@@ -70,7 +70,7 @@ CHAT_HISTORY = [
 def FirstLayerDMM(prompt: str) -> list:
     try:
         stream = co.chat_stream(
-            model="command-r-plus",
+            model="command-r7b",
             message=prompt,
             temperature=0.7,
             chat_history=CHAT_HISTORY,
