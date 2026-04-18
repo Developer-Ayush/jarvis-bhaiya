@@ -1,156 +1,114 @@
-"""
-music_player.py  –  Jarvis Alexa Skill
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Uses yt-dlp (Python library) to extract a direct HTTPS audio stream
-URL from YouTube — NO ADS, NO BROWSER, NO FFMPEG DOWNLOAD.
-
-How it works
-────────────
-  1. yt-dlp searches YouTube for the song name.
-  2. It extracts the best audio-only format (m4a/AAC preferred,
-     fallback to best available audio).
-  3. The raw HTTPS stream URL is returned to the Alexa AudioPlayer,
-     which streams it directly to the Echo device.
-  4. Since we bypass the YouTube webpage / player entirely,
-     there are zero ads — no pre-roll, no mid-roll, nothing.
-
-Alexa-compatible audio formats
-───────────────────────────────
-  • AAC / M4A  ← preferred (high quality, small size)
-  • MP3        ← fallback
-  • Opus       ← NOT supported by Alexa (skipped)
-  • WebM       ← NOT supported by Alexa (skipped)
-
-Lambda /tmp usage
-──────────────────
-  yt-dlp writes its cache to /tmp (Lambda's only writable path).
-"""
-
-import os
+import requests
 import logging
-import yt_dlp
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = "/tmp/yt-dlp-cache"
-os.makedirs(_CACHE_DIR, exist_ok=True)
+# Public Piped API instances - uses YouTube content directly
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://api.piped.projectsegfau.lt",
+    "https://pipedapi.bocchi.rocks",
+]
 
-# Formats Alexa's AudioPlayer can actually play
-_ALEXA_OK_EXTS = {"m4a", "mp3", "aac", "mp4"}
-
-# ──────────────────────────────────────────────────────────────
-# yt-dlp options
-# ──────────────────────────────────────────────────────────────
-
-def _build_ydl_opts() -> dict:
-    return {
-        # Prefer AAC/M4A audio-only → best quality Alexa can play
-        "format": "bestaudio[ext=m4a]/bestaudio[ext=aac]/bestaudio[ext=mp3]/bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "cachedir": _CACHE_DIR,
-        # Do NOT download; just extract info
-        "skip_download": True,
-        # Age gate bypass (some music videos)
-        "age_limit": None,
-        # Avoid rate limiting
-        "sleep_interval": 0,
-        "max_sleep_interval": 0,
-    }
+def _get_working_instance():
+    """Find a working Piped instance."""
+    for instance in PIPED_INSTANCES:
+        try:
+            r = requests.get(f"{instance}/trending", timeout=5)
+            if r.status_code == 200:
+                return instance
+        except:
+            continue
+    return PIPED_INSTANCES[0]
 
 
-# ──────────────────────────────────────────────────────────────
-# Main function
-# ──────────────────────────────────────────────────────────────
-
-def get_youtube_stream(query: str) -> tuple[str | None, str | None, str | None]:
+def get_youtube_stream(query: str):
     """
-    Search YouTube for `query` and return:
-        (stream_url, title, thumbnail_url)
-
-    Returns (None, None, None) if nothing is found or an error occurs.
-
-    Parameters
-    ──────────
-    query : str
-        Song name or search string, e.g. "Sahiba", "Tum Hi Ho Arijit Singh"
+    Search YouTube via Piped API and return direct audio stream URL.
+    No bot detection. Real YouTube content. No API key needed.
     """
-    logger.info(f"Searching YouTube for: {query}")
-
-    search_query = f"ytsearch1:{query}"          # Search, pick top result
-    ydl_opts = _build_ydl_opts()
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_query, download=False)
+        logger.info(f"Searching YouTube (via Piped) for: {query}")
+        instance = _get_working_instance()
+        logger.info(f"Using Piped instance: {instance}")
 
-        if not info:
-            logger.warning(f"No info returned for query: {query}")
+        # Step 1 — Search YouTube
+        search_url = f"{instance}/search"
+        params = {"q": query, "filter": "music_songs"}
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        search_resp = requests.get(
+            search_url, params=params,
+            headers=headers, timeout=10
+        )
+
+        if search_resp.status_code != 200:
+            logger.error(f"Search failed: {search_resp.status_code}")
             return None, None, None
 
-        # ytsearch wraps results in 'entries'
-        entries = info.get("entries")
-        if entries:
-            video = entries[0]
-        else:
-            video = info          # Direct URL was passed
+        search_data = search_resp.json()
+        items = search_data.get("items", [])
 
-        if not video:
+        if not items:
+            logger.warning(f"No results for: {query}")
             return None, None, None
 
-        title     = video.get("title", query)
-        thumbnail = video.get("thumbnail", "")
-        formats   = video.get("formats", [])
+        # Step 2 — Get first result video ID
+        first = items[0]
+        video_url = first.get("url", "")        # e.g. /watch?v=abc123
+        title     = first.get("title", query)
+        thumbnail = first.get("thumbnail", "")
+        video_id  = video_url.replace("/watch?v=", "").strip()
 
-        logger.info(f"Found: '{title}' — scanning {len(formats)} formats")
+        logger.info(f"Found: {title} | ID: {video_id}")
 
-        # ── Pick best Alexa-compatible audio-only format ────────
-        best_url   = None
-        best_abr   = 0      # audio bitrate
+        # Step 3 — Get stream URL from Piped
+        stream_resp = requests.get(
+            f"{instance}/streams/{video_id}",
+            headers=headers, timeout=10
+        )
 
-        for fmt in formats:
-            ext     = fmt.get("ext", "")
-            acodec  = fmt.get("acodec", "none")
-            vcodec  = fmt.get("vcodec", "none")
-            abr     = fmt.get("abr") or 0
-            url     = fmt.get("url", "")
+        if stream_resp.status_code != 200:
+            logger.error(f"Stream fetch failed: {stream_resp.status_code}")
+            return None, None, None
 
-            # Must have audio, no video, Alexa-ok extension
-            if (acodec != "none"
-                    and vcodec == "none"
-                    and ext in _ALEXA_OK_EXTS
-                    and url):
-                if abr > best_abr:
-                    best_abr = abr
-                    best_url = url
+        stream_data = stream_resp.json()
+        audio_streams = stream_data.get("audioStreams", [])
 
-        # Fallback: any audio-only format regardless of extension
-        if not best_url:
-            for fmt in formats:
-                acodec = fmt.get("acodec", "none")
-                vcodec = fmt.get("vcodec", "none")
-                url    = fmt.get("url", "")
-                abr    = fmt.get("abr") or 0
-                if acodec != "none" and vcodec == "none" and url:
-                    if abr > best_abr:
-                        best_abr = abr
-                        best_url = url
+        if not audio_streams:
+            logger.warning(f"No audio streams for: {title}")
+            return None, None, None
 
-        # Last resort: video URL (Alexa can sometimes handle it)
-        if not best_url:
-            best_url = video.get("url")
+        # Step 4 — Pick best quality audio stream Alexa can play
+        # Alexa supports: mp4a (AAC), mp3
+        # Sort by bitrate descending
+        audio_streams.sort(
+            key=lambda x: x.get("bitrate", 0), reverse=True
+        )
 
-        if best_url:
-            logger.info(f"Stream URL obtained for '{title}' at {best_abr} kbps")
+        stream_url = None
+        for stream in audio_streams:
+            mime = stream.get("mimeType", "")
+            url  = stream.get("url", "")
+            if ("mp4" in mime or "mp3" in mime or "aac" in mime) and url:
+                stream_url = url
+                logger.info(
+                    f"Selected stream: {mime} "
+                    f"@ {stream.get('bitrate', '?')} bps"
+                )
+                break
+
+        # Fallback — just take the first one
+        if not stream_url and audio_streams:
+            stream_url = audio_streams[0].get("url")
+
+        if stream_url:
+            logger.info(f"Stream URL obtained for: {title}")
+            return stream_url, title, thumbnail
         else:
-            logger.warning(f"No usable stream URL found for '{title}'")
+            logger.warning(f"No usable stream URL for: {title}")
+            return None, None, None
 
-        return best_url, title, thumbnail
-
-    except yt_dlp.utils.DownloadError as de:
-        logger.error(f"yt-dlp DownloadError: {de}")
-        return None, None, None
     except Exception as exc:
-        logger.error(f"Unexpected error in get_youtube_stream: {exc}", exc_info=True)
+        logger.error(f"Piped error: {exc}", exc_info=True)
         return None, None, None
