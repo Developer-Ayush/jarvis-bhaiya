@@ -22,8 +22,8 @@ COHERE_KEY     = os.environ.get("CohereApiKey", "")
 
 def matthew(text: str) -> str:
     text = text.replace("&", "and").replace("<", "").replace(">", "")
-    return f'<speak>{text}</speak>'
-
+    return f'<speak><lang xml:lang="hi-IN">{text}</lang></speak>'
+    
 def _build_response(text, end_session, reprompt=None, directives=None):
     response = {
         "outputSpeech": {"type": "SSML", "ssml": matthew(text)},
