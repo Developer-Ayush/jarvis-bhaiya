@@ -22,8 +22,7 @@ COHERE_KEY     = os.environ.get("CohereApiKey", "")
 
 def matthew(text: str) -> str:
     text = text.replace("&", "and").replace("<", "").replace(">", "")
-    return f'<speak><voice name="Matthew">{text}</voice></speak>'
-
+    return f'<speak><voice name="Kajal">{text}</voice></speak>'
 
 def _build_response(text, end_session, reprompt=None, directives=None):
     response = {
