@@ -1,7 +1,7 @@
 """
 music_player.py — Jarvis AI Alexa Skill
-YouTube API v3 for search + Piped proxy stream URLs for playback.
-Piped /streams endpoint returns its own proxy URLs (no cookies needed).
+YouTube API v3 for search + Invidious for stream URLs.
+Piped is dead — using Invidious instances instead.
 """
 
 import os
@@ -13,11 +13,12 @@ logger = logging.getLogger(__name__)
 YOUTUBE_API_KEY = os.environ.get("YoutubeAPIKey", "")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-PIPED_INSTANCES = [
-    "https://pipedapi.kavin.rocks",
-    "https://api.piped.projectsegfau.lt",
-    "https://pipedapi.bocchi.rocks",
-    "https://piped-api.garudalinux.org",
+INVIDIOUS_INSTANCES = [
+    "https://inv.nadeko.net",
+    "https://invidious.privacyredirect.com",
+    "https://yt.cdaut.de",
+    "https://invidious.nerdvpn.de",
+    "https://iv.melmac.space",
 ]
 
 
@@ -46,7 +47,7 @@ def _youtube_search(query: str):
         if not items:
             return None, None
         video_id = items[0]["id"]["videoId"]
-        title = items[0]["snippet"]["title"]
+        title    = items[0]["snippet"]["title"]
         logger.info(f"Found: '{title}' id={video_id}")
         return video_id, title
     except Exception as e:
@@ -54,57 +55,67 @@ def _youtube_search(query: str):
         return None, None
 
 
-def _get_piped_stream(video_id: str):
+def _get_invidious_stream(video_id: str):
     """
-    Get audio stream URL from Piped.
-    Piped returns its own proxy URLs (e.g. /videoplayback?...) which
-    don't require YouTube cookies and are directly streamable by Alexa.
-    We prefer audio/mp4 (AAC) over audio/webm (opus) for Alexa compatibility.
+    Get audio stream URL from Invidious.
+    Tries multiple instances with fallback.
+    Prefers audio/mp4 (AAC) for Alexa compatibility.
     """
-    for instance in PIPED_INSTANCES:
+    for instance in INVIDIOUS_INSTANCES:
         try:
             r = requests.get(
-                f"{instance}/streams/{video_id}",
+                f"{instance}/api/v1/videos/{video_id}",
                 headers=HEADERS,
+                params={"fields": "adaptiveFormats,title"},
                 timeout=8,
             )
             if r.status_code != 200:
-                logger.warning(f"Piped {instance} returned {r.status_code}")
+                logger.warning(f"Invidious {instance} returned {r.status_code}")
                 continue
 
             data = r.json()
-            audio_streams = data.get("audioStreams", [])
-            if not audio_streams:
-                logger.warning(f"No audio streams from {instance}")
+            formats = data.get("adaptiveFormats", [])
+            if not formats:
+                logger.warning(f"No adaptive formats from {instance}")
                 continue
 
-            logger.info(f"Got {len(audio_streams)} streams from {instance}")
-            for s in audio_streams:
-                logger.info(f"  mime={s.get('mimeType')} bitrate={s.get('bitrate')} url={s.get('url','')[:60]}")
+            # Filter audio-only formats
+            audio_formats = [
+                f for f in formats
+                if f.get("type", "").startswith("audio")
+                and f.get("url")
+            ]
+
+            if not audio_formats:
+                logger.warning(f"No audio formats from {instance}")
+                continue
+
+            logger.info(f"Got {len(audio_formats)} audio formats from {instance}")
 
             # Sort by bitrate descending
-            audio_streams.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
+            audio_formats.sort(
+                key=lambda x: int(x.get("bitrate", 0)), reverse=True
+            )
 
-            # First pass: prefer audio/mp4 (AAC) — Alexa compatible
-            for s in audio_streams:
-                mime = s.get("mimeType", "")
-                url = s.get("url", "")
+            # First pass: prefer audio/mp4 (AAC) — best Alexa compatibility
+            for f in audio_formats:
+                mime = f.get("type", "")
+                url  = f.get("url", "")
                 if "mp4" in mime and url:
-                    logger.info(f"Selected mp4 stream: {mime} @ {s.get('bitrate')}bps")
+                    logger.info(f"Selected mp4 stream: {mime}")
                     return url
 
-            # Second pass: any audio format
-            for s in audio_streams:
-                url = s.get("url", "")
-                if url:
-                    mime = s.get("mimeType", "")
-                    logger.info(f"Fallback stream: {mime} @ {s.get('bitrate')}bps")
-                    return url
+            # Fallback: any audio format
+            url = audio_formats[0].get("url")
+            if url:
+                logger.info(f"Fallback stream: {audio_formats[0].get('type')}")
+                return url
 
         except Exception as e:
-            logger.warning(f"Piped {instance} error: {e}")
+            logger.warning(f"Invidious {instance} error: {e}")
             continue
 
+    logger.error("All Invidious instances failed")
     return None
 
 
@@ -116,9 +127,9 @@ def get_youtube_stream(query: str):
     if not video_id:
         return None, None, None
 
-    url = _get_piped_stream(video_id)
+    url = _get_invidious_stream(video_id)
     if url:
         return url, title, None
 
-    logger.error(f"All Piped instances failed for {video_id}")
+    logger.error(f"All instances failed for {video_id}")
     return None, None, None
