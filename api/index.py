@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response  # ← add Response
 from ask_sdk_core.skill_builder import SkillBuilder
 from ask_sdk_core.handler_input import HandlerInput
 from ask_sdk_core.utils import is_request_type, is_intent_name
@@ -231,7 +231,7 @@ def alexa_endpoint():
             http_headers=dict(request.headers),
             http_body=request.data.decode("utf-8"),
         )
-        return jsonify(response)
+        return Response(response, content_type="application/json")  # ← fix
     except Exception as e:
         logger.error(f"Alexa endpoint error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
