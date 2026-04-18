@@ -1,7 +1,7 @@
 """
 music_player.py — Jarvis AI Alexa Skill
-YouTube API v3 for search + Invidious for stream URLs.
-Piped is dead — using Invidious instances instead.
+YouTube Data API v3 for search + Cobalt API for stream extraction.
+Cobalt is free, no key needed, works from Vercel.
 """
 
 import os
@@ -13,12 +13,10 @@ logger = logging.getLogger(__name__)
 YOUTUBE_API_KEY = os.environ.get("YoutubeAPIKey", "")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-INVIDIOUS_INSTANCES = [
-    "https://inv.nadeko.net",
-    "https://invidious.privacyredirect.com",
-    "https://yt.cdaut.de",
-    "https://invidious.nerdvpn.de",
-    "https://iv.melmac.space",
+COBALT_INSTANCES = [
+    "https://api.cobalt.tools",
+    "https://cobalt.ayaka.io",
+    "https://cobalt-api.kwiatekmiki.com",
 ]
 
 
@@ -55,81 +53,71 @@ def _youtube_search(query: str):
         return None, None
 
 
-def _get_invidious_stream(video_id: str):
+def _cobalt_stream(video_id: str):
     """
-    Get audio stream URL from Invidious.
+    Get audio stream URL from Cobalt API.
     Tries multiple instances with fallback.
-    Prefers audio/mp4 (AAC) for Alexa compatibility.
     """
-    for instance in INVIDIOUS_INSTANCES:
+    yt_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    for instance in COBALT_INSTANCES:
         try:
-            r = requests.get(
-                f"{instance}/api/v1/videos/{video_id}",
-                headers=HEADERS,
-                params={"fields": "adaptiveFormats,title"},
-                timeout=8,
+            r = requests.post(
+                instance,
+                json={
+                    "url": yt_url,
+                    "downloadMode": "audio",
+                    "audioFormat": "best",
+                    "filenameStyle": "basic",
+                },
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0",
+                },
+                timeout=10,
             )
+
             if r.status_code != 200:
-                logger.warning(f"Invidious {instance} returned {r.status_code}")
+                logger.warning(f"Cobalt {instance} returned {r.status_code}: {r.text[:100]}")
                 continue
 
             data = r.json()
-            formats = data.get("adaptiveFormats", [])
-            if not formats:
-                logger.warning(f"No adaptive formats from {instance}")
-                continue
+            status = data.get("status")
+            url    = data.get("url")
 
-            # Filter audio-only formats
-            audio_formats = [
-                f for f in formats
-                if f.get("type", "").startswith("audio")
-                and f.get("url")
-            ]
+            logger.info(f"Cobalt {instance} status={status} url={str(url)[:60]}")
 
-            if not audio_formats:
-                logger.warning(f"No audio formats from {instance}")
-                continue
-
-            logger.info(f"Got {len(audio_formats)} audio formats from {instance}")
-
-            # Sort by bitrate descending
-            audio_formats.sort(
-                key=lambda x: int(x.get("bitrate", 0)), reverse=True
-            )
-
-            # First pass: prefer audio/mp4 (AAC) — best Alexa compatibility
-            for f in audio_formats:
-                mime = f.get("type", "")
-                url  = f.get("url", "")
-                if "mp4" in mime and url:
-                    logger.info(f"Selected mp4 stream: {mime}")
-                    return url
-
-            # Fallback: any audio format
-            url = audio_formats[0].get("url")
-            if url:
-                logger.info(f"Fallback stream: {audio_formats[0].get('type')}")
+            # stream / redirect / tunnel — all are directly usable by Alexa
+            if status in ("stream", "redirect", "tunnel") and url:
                 return url
 
+            # picker returns a list — grab the first audio item
+            if status == "picker":
+                for item in data.get("picker", []):
+                    if item.get("url"):
+                        return item["url"]
+
         except Exception as e:
-            logger.warning(f"Invidious {instance} error: {e}")
+            logger.warning(f"Cobalt {instance} error: {e}")
             continue
 
-    logger.error("All Invidious instances failed")
+    logger.error("All Cobalt instances failed")
     return None
 
 
 def get_youtube_stream(query: str):
     """
     Returns (stream_url, title, None) or (None, None, None).
+    Flow: YouTube Data API v3 search → Cobalt stream extraction
     """
     video_id, title = _youtube_search(query)
     if not video_id:
         return None, None, None
 
-    url = _get_invidious_stream(video_id)
+    url = _cobalt_stream(video_id)
     if url:
         return url, title, None
 
-    logger.error(f"All instances failed for {video_id}")
+    logger.error(f"Cobalt failed for: {title} ({video_id})")
     return None, None, None
