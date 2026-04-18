@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "bhaiya",
+      "invocationName": "bhaiya ji",
       "intents": [
         {
           "name": "AMAZON.CancelIntent",
