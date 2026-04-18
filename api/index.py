@@ -1,256 +1,132 @@
-import sys
+"""
+music_player.py — Jarvis AI Alexa Skill
+YouTube Data API v3 for search + yt-dlp for stream URL extraction.
+Uses pre-muxed audio formats only (no ffmpeg needed).
+"""
+
 import os
+import requests
 import logging
-import json
+import yt_dlp
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from flask import Flask, request, jsonify
-from music_player import get_youtube_stream  # ← moved to top level
+YOUTUBE_API_KEY = os.environ.get("YoutubeAPIKey", "")
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-app = Flask(__name__)
-
-ASSISTANT_NAME = os.environ.get("AssistantName", "Bhaiya")
-USERNAME       = os.environ.get("Username", "Sir")
-GROQ_KEY       = os.environ.get("GroqAPIKey", "")
-COHERE_KEY     = os.environ.get("CohereApiKey", "")
-
-
-def matthew(text: str) -> str:
-    text = text.replace("&", "and").replace("<", "").replace(">", "")
-    return f'<speak><lang xml:lang="hi-IN">{text}</lang></speak>'
-
-
-def _build_response(text, end_session, reprompt=None, directives=None):
-    response = {
-        "outputSpeech": {"type": "SSML", "ssml": matthew(text)},
-        "shouldEndSession": end_session
-    }
-    if reprompt:
-        response["reprompt"] = {
-            "outputSpeech": {"type": "SSML", "ssml": matthew(reprompt)}
+# yt-dlp options — no download, no ffmpeg, audio only pre-muxed
+YDL_OPTS = {
+    "format": "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio[acodec=aac]/bestaudio",
+    "quiet": True,
+    "no_warnings": True,
+    "noplaylist": True,
+    "skip_download": True,
+    "no_check_certificate": True,
+    "socket_timeout": 10,
+    "http_headers": {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+    # Extractor args to reduce bot detection
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"],
         }
-    if directives:
-        response["directives"] = directives
-    return jsonify({"version": "1.0", "response": response}), 200
+    },
+}
 
 
-def _build_audio_response(speak_text, stream_url, title):
-    return jsonify({
-        "version": "1.0",
-        "response": {
-            "outputSpeech": {"type": "SSML", "ssml": matthew(speak_text)},
-            "directives": [{
-                "type": "AudioPlayer.Play",
-                "playBehavior": "REPLACE_ALL",
-                "audioItem": {
-                    "stream": {
-                        "token": f"jarvis::{title}",
-                        "url": stream_url,
-                        "offsetInMilliseconds": 0
-                    },
-                    "metadata": {
-                        "title": title,
-                        "subtitle": f"{ASSISTANT_NAME} AI — Ad Free"
-                    }
-                }
-            }],
-            "shouldEndSession": True
-        }
-    }), 200
-
-
-def _process_decision(decision, original_query):
-    import re
-    def clean(text):
-        text = re.sub(r"\*+", "", text)
-        text = re.sub(r"#+\s*", "", text)
-        text = re.sub(r"`+", "", text)
-        return text.replace("</s>", "").strip()[:7000]
-
-    R = any(i.startswith("realtime") for i in decision)
-    merged = " and ".join(
-        [" ".join(i.split()[1:]) for i in decision
-         if i.startswith("general") or i.startswith("realtime")]
-    )
-
-    for d in decision:
-        if d.startswith("play "):
-            song = d.removeprefix("play ").strip()
-            url, title, _ = get_youtube_stream(song)
-            if url:
-                return f"Playing {title} for you {USERNAME}!", url
-            return f"Sorry {USERNAME}, {song} nahi mila.", None
-
-    auto_keys = ["google search", "youtube search", "content", "reminder"]
-    for d in decision:
-        if any(d.startswith(k) for k in auto_keys):
-            from automation import handle_automation
-            result = handle_automation(d)
-            if result:
-                return clean(result), None
-
-    if R:
-        from realtime_search import RealtimeSearchEngine
-        return clean(RealtimeSearchEngine(merged or original_query)), None
-
-    for d in decision:
-        if d.startswith("general "):
-            from chatbot import ChatBot
-            return clean(ChatBot(d.replace("general ", "").strip())), None
-
-    for d in decision:
-        if d == "exit":
-            return f"Goodbye {USERNAME}!", None
-
-    from chatbot import ChatBot
-    return clean(ChatBot(original_query)), None
-
-
-# ─────────────────────────────────────────────
-# ROUTES
-# ─────────────────────────────────────────────
-
-@app.route("/test-music", methods=["GET"])
-def test_music():
-    import traceback
-    song = request.args.get("song", "Sahiba")
+def _youtube_search(query: str):
+    """Search via YouTube Data API v3. Returns (video_id, title)."""
+    if not YOUTUBE_API_KEY:
+        logger.error("YoutubeAPIKey not set!")
+        return None, None
     try:
-        url, title, _ = get_youtube_stream(song)
-        if url:
-            html = (
-                "<h2>Stream found!</h2>"
-                "<p><b>Song:</b> " + title + "</p>"
-                "<p><b>URL:</b> " + url[:120] + "...</p>"
-                "<audio controls src='" + url + "'>no audio support</audio>"
-            )
-            return html, 200
-        return "<h2>Stream returned None</h2><p>Check Vercel Logs tab for details.</p>", 500
-    except Exception as e:
-        tb = traceback.format_exc()
-        return "<h2>Exception:</h2><pre>" + tb + "</pre>", 500
-
-
-@app.route("/", methods=["GET"])
-def health():
-    return jsonify({
-        "status": "running",
-        "assistant": ASSISTANT_NAME,
-        "groq_key_set": bool(GROQ_KEY),
-        "cohere_key_set": bool(COHERE_KEY),
-        "youtube_key_set": bool(os.environ.get("YoutubeAPIKey", "")),
-        "endpoint": "/alexa"
-    }), 200
-
-
-@app.route("/alexa", methods=["POST"])
-def alexa_endpoint():
-    try:
-        data = json.loads(request.data.decode("utf-8"))
-        request_type = data.get("request", {}).get("type", "")
-        intent_name  = data.get("request", {}).get("intent", {}).get("name", "")
-        logger.info(f"Type: {request_type} | Intent: {intent_name}")
-
-        if request_type == "LaunchRequest":
-            return _build_response(
-                f"Haan {USERNAME}! Main {ASSISTANT_NAME} hoon. "
-                "Gana sunna ho toh song ka naam ke baad gana chalado kaho. "
-                "Koi sawaal ho toh seedha pooch lo. Batao kya karna hai?",
-                end_session=False,
-                reprompt="Haan bolo."
-            )
-
-        elif request_type == "IntentRequest":
-
-            if intent_name == "MusicPlayIntent":
-                slots = data["request"]["intent"].get("slots", {})
-                song  = slots.get("song", {}).get("value", "")
-                if not song:
-                    return _build_response(
-                        "Kaun sa gana bajana hai?",
-                        end_session=False,
-                        reprompt="Song ka naam batao."
-                    )
-                url, title, _ = get_youtube_stream(song)
-                if url:
-                    return _build_audio_response(f"Suno {USERNAME}, {title}!", url, title)
-                return _build_response(
-                    f"Sorry {USERNAME}, {song} nahi mila. Koi aur try karo.",
-                    end_session=False, reprompt="Koi aur gana batao?"
-                )
-
-            elif intent_name == "QueryIntent":
-                slots = data["request"]["intent"].get("slots", {})
-                query = slots.get("query", {}).get("value", "")
-                if not query:
-                    return _build_response(
-                        "Samjha nahi. Dobara poochho.",
-                        end_session=False, reprompt="Kya poochna tha?"
-                    )
-                from model import FirstLayerDMM
-                decision = FirstLayerDMM(query)
-                logger.info(f"Decision: {decision}")
-                spoken, audio_url = _process_decision(decision, query)
-                if audio_url:
-                    return _build_audio_response(spoken, audio_url, query)
-                return _build_response(spoken, end_session=False, reprompt="Aur kuch?")
-
-            elif intent_name == "AMAZON.PauseIntent":
-                return jsonify({
-                    "version": "1.0",
-                    "response": {
-                        "directives": [{"type": "AudioPlayer.Stop"}],
-                        "shouldEndSession": True
-                    }
-                }), 200
-
-            elif intent_name == "AMAZON.ResumeIntent":
-                return jsonify({"version": "1.0", "response": {}}), 200
-
-            elif intent_name in ("AMAZON.StopIntent", "AMAZON.CancelIntent"):
-                return _build_response(
-                    f"Theek hai {USERNAME}, phir milenge!",
-                    end_session=True,
-                    directives=[{"type": "AudioPlayer.Stop"}]
-                )
-
-            elif intent_name == "AMAZON.HelpIntent":
-                return _build_response(
-                    f"Main {ASSISTANT_NAME} hoon. "
-                    "Gana sunna ho toh song ke baad gana chalado kaho. "
-                    "Koi sawaal pooch sakte ho. "
-                    "News ke liye kaho aaj ka news kya hai. "
-                    f"Try karo: Sahiba gana chalado. Batao {USERNAME}?",
-                    end_session=False, reprompt="Batao kya karna hai?"
-                )
-
-            else:
-                return _build_response(
-                    "Samjha nahi. Help bolne ke liye kaho help.",
-                    end_session=False, reprompt="Kya poochna tha?"
-                )
-
-        elif request_type == "SessionEndedRequest":
-            return jsonify({"version": "1.0", "response": {}}), 200
-
-        elif request_type.startswith("AudioPlayer.") or \
-             request_type.startswith("PlaybackController."):
-            return jsonify({"version": "1.0", "response": {}}), 200
-
-        else:
-            return _build_response(
-                "Kuch samjha nahi. Dobara try karo.",
-                end_session=False
-            )
-
-    except Exception as exc:
-        logger.error(f"Error: {exc}", exc_info=True)
-        return _build_response(
-            f"Kuch gadbad ho gayi {USERNAME}. Dobara try karo.",
-            end_session=False
+        r = requests.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params={
+                "part": "snippet",
+                "q": query,
+                "type": "video",
+                "videoCategoryId": "10",
+                "maxResults": 1,
+                "key": YOUTUBE_API_KEY,
+            },
+            timeout=8,
         )
+        if r.status_code != 200:
+            logger.error(f"YouTube API {r.status_code}: {r.text[:200]}")
+            return None, None
+        items = r.json().get("items", [])
+        if not items:
+            return None, None
+        video_id = items[0]["id"]["videoId"]
+        title = items[0]["snippet"]["title"]
+        logger.info(f"Found: '{title}' id={video_id}")
+        return video_id, title
+    except Exception as e:
+        logger.error(f"YouTube search error: {e}")
+        return None, None
+
+
+def _ytdlp_extract(video_id: str):
+    """
+    Use yt-dlp to extract a direct audio stream URL.
+    No download, no ffmpeg — just URL extraction.
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                logger.error("yt-dlp returned no info")
+                return None
+
+            stream_url = info.get("url")
+            if stream_url:
+                logger.info(f"yt-dlp got URL: {stream_url[:80]}")
+                return stream_url
+
+            # Some formats nest the URL inside formats list
+            formats = info.get("formats", [])
+            for f in reversed(formats):
+                furl = f.get("url", "")
+                ext = f.get("ext", "")
+                acodec = f.get("acodec", "none")
+                vcodec = f.get("vcodec", "none")
+                # Audio only, prefer m4a/mp3/aac
+                if acodec != "none" and vcodec == "none" and furl:
+                    logger.info(f"yt-dlp format: ext={ext} acodec={acodec}")
+                    return furl
+
+            logger.error("yt-dlp: no usable audio URL found in formats")
+            return None
+
+    except yt_dlp.utils.DownloadError as e:
+        logger.error(f"yt-dlp DownloadError: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"yt-dlp error: {e}", exc_info=True)
+        return None
+
+
+def get_youtube_stream(query: str):
+    """
+    Returns (stream_url, title, None) or (None, None, None).
+    Flow: YouTube API v3 search → yt-dlp URL extraction
+    """
+    video_id, title = _youtube_search(query)
+    if not video_id:
+        return None, None, None
+
+    stream_url = _ytdlp_extract(video_id)
+    if stream_url:
+        return stream_url, title, None
+
+    logger.error(f"yt-dlp failed for: {title} ({video_id})")
+    return None, None, None
