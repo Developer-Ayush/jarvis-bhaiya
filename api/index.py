@@ -218,15 +218,23 @@ def error_handler(handler_input, exception):
     )
 
 # ── Alexa POST endpoint ───────────────────────────────────────
-skill_handler = WebserviceSkillHandler(skill=sb.create())
+skill_handler = WebserviceSkillHandler(
+    skill=sb.create(),
+    verify_signature=False,   # Vercel proxy mangles headers
+    verify_timestamp=False,
+)
 
 @app.route("/alexa", methods=["POST"])
 def alexa_endpoint():
-    response = skill_handler.verify_request_and_dispatch(
-        http_headers=dict(request.headers),
-        http_body=request.data.decode("utf-8"),
-    )
-    return jsonify(response)
+    try:
+        response = skill_handler.verify_request_and_dispatch(
+            http_headers=dict(request.headers),
+            http_body=request.data.decode("utf-8"),
+        )
+        return jsonify(response)
+    except Exception as e:
+        logger.error(f"Alexa endpoint error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 # ── Vercel entry point ────────────────────────────────────────
 application = app
