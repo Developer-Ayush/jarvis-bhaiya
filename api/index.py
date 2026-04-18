@@ -118,17 +118,22 @@ def _process_decision(decision, original_query):
 
 @app.route("/test-music", methods=["GET"])
 def test_music():
+    import traceback
     song = request.args.get("song", "Sahiba")
-    url, title, _ = get_youtube_stream(song)
-    if url:
-        html = (
-            "<h2>Stream found!</h2>"
-            "<p><b>Song:</b> " + title + "</p>"
-            "<p><b>URL:</b> " + url[:120] + "...</p>"
-            "<audio controls src='" + url + "'>no audio support</audio>"
-        )
-        return html, 200
-    return "<h2>Stream failed for: " + song + "</h2><p>Check Vercel Logs.</p>", 500
+    try:
+        url, title, _ = get_youtube_stream(song)
+        if url:
+            html = (
+                "<h2>Stream found!</h2>"
+                "<p><b>Song:</b> " + title + "</p>"
+                "<p><b>URL:</b> " + url[:120] + "...</p>"
+                "<audio controls src='" + url + "'>no audio support</audio>"
+            )
+            return html, 200
+        return "<h2>Stream returned None</h2><p>Check Vercel Logs tab for details.</p>", 500
+    except Exception as e:
+        tb = traceback.format_exc()
+        return "<h2>Exception:</h2><pre>" + tb + "</pre>", 500
 
 
 @app.route("/", methods=["GET"])
