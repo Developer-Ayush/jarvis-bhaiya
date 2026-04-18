@@ -56,40 +56,49 @@ def _youtube_search(query: str):
         return None, None
 
 
-def _invidious_proxy_url(instance: str, video_id: str) -> str:
+def _resolve_stream_url(instance: str, video_id: str):
     """
-    Build an Invidious proxy URL for itag 140 (audio/mp4 AAC 128kbps).
-    Alexa can stream this directly. No parsing needed.
+    Follow the Invidious /latest_version redirect to get the real CDN URL.
+    Without local=true, Invidious redirects to the actual YouTube CDN URL.
+    These are direct mp4/aac files Alexa can stream.
     """
-    return f"{instance}/latest_version?id={video_id}&itag=140&local=true"
-
-
-def _check_url(url: str) -> bool:
-    """Check if URL responds with 200."""
+    proxy_url = f"{instance}/latest_version?id={video_id}&itag=140"
     try:
-        r = requests.head(url, headers=HEADERS, timeout=6, allow_redirects=True)
-        ok = r.status_code == 200
-        logger.info(f"URL check {r.status_code} ok={ok}: {url[:80]}")
-        return ok
+        r = requests.get(
+            proxy_url,
+            headers=HEADERS,
+            timeout=8,
+            allow_redirects=True,
+            stream=True,  # Don't download body, just follow redirects
+        )
+        # The final URL after all redirects is the real CDN URL
+        final_url = r.url
+        ct = r.headers.get("Content-Type", "")
+        logger.info(f"Resolved: status={r.status_code} ct={ct} url={final_url[:80]}")
+        if r.status_code == 200 and final_url != proxy_url:
+            return final_url
+        # If no redirect happened but status is 200, try returning the proxy url
+        if r.status_code == 200:
+            return proxy_url
+        return None
     except Exception as e:
-        logger.warning(f"URL check failed: {e}")
-        return False
+        logger.warning(f"Resolve failed for {instance}: {e}")
+        return None
 
 
 def get_youtube_stream(query: str):
     """
     Returns (stream_url, title, None) or (None, None, None).
-    Flow: YouTube API v3 → Invidious proxy (itag=140 AAC)
+    Flow: YouTube API v3 → Invidious redirect → real CDN URL
     """
     video_id, title = _youtube_search(query)
     if not video_id:
         return None, None, None
 
-    # Try each Invidious instance proxy URL
     for instance in INVIDIOUS_INSTANCES:
-        url = _invidious_proxy_url(instance, video_id)
-        if _check_url(url):
-            logger.info(f"Using proxy: {instance}")
+        url = _resolve_stream_url(instance, video_id)
+        if url:
+            logger.info(f"Stream URL resolved via {instance}: {url[:80]}")
             return url, title, None
         logger.warning(f"Instance failed: {instance}")
 
