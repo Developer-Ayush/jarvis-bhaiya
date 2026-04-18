@@ -65,12 +65,11 @@ def _invidious_proxy_url(instance: str, video_id: str) -> str:
 
 
 def _check_url(url: str) -> bool:
-    """Check if URL is reachable and returns audio content."""
+    """Check if URL responds with 200."""
     try:
         r = requests.head(url, headers=HEADERS, timeout=6, allow_redirects=True)
-        ct = r.headers.get("Content-Type", "")
-        ok = r.status_code == 200 and ("audio" in ct or "video" in ct or "octet" in ct)
-        logger.info(f"URL check {r.status_code} ct={ct} ok={ok}: {url[:80]}")
+        ok = r.status_code == 200
+        logger.info(f"URL check {r.status_code} ok={ok}: {url[:80]}")
         return ok
     except Exception as e:
         logger.warning(f"URL check failed: {e}")
