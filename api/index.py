@@ -131,6 +131,46 @@ def debug_invidious():
 
     return __import__('flask').jsonify(results)
 
+
+@app.route("/debug-cobalt", methods=["GET"])
+def debug_cobalt():
+    import requests as req
+    video_id = "n2dVFdqMYGA"
+    yt_url = f"https://www.youtube.com/watch?v={video_id}"
+    results = {}
+
+    instances = [
+        "https://api.cobalt.tools",
+        "https://cobalt.ayaka.io",
+        "https://cobalt-api.kwiatekmiki.com",
+    ]
+
+    for instance in instances:
+        try:
+            r = req.post(
+                instance,
+                json={
+                    "url": yt_url,
+                    "downloadMode": "audio",
+                    "audioFormat": "best",
+                    "filenameStyle": "basic",
+                },
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0",
+                },
+                timeout=10,
+            )
+            results[instance] = {
+                "status": r.status_code,
+                "body": r.text[:500]
+            }
+        except Exception as e:
+            results[instance] = {"error": str(e)}
+
+    return __import__('flask').jsonify(results)
+
 @app.route("/test-music", methods=["GET"])
 def test_music():
     if errors:
