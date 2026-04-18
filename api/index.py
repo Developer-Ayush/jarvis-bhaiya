@@ -1,186 +1,233 @@
+"""
+api/index.py — Jarvis AI Alexa Skill (Vercel entry point)
+"""
+
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask, jsonify
+import logging
+from flask import Flask, request, jsonify
+from ask_sdk_core.skill_builder import SkillBuilder
+from ask_sdk_core.handler_input import HandlerInput
+from ask_sdk_core.utils import is_request_type, is_intent_name
+from ask_sdk_model import Response
+from ask_sdk_model.interfaces.audioplayer import (
+    PlayDirective, PlayBehavior, AudioItem, Stream
+)
+from ask_sdk_webservice_support.webservice_handler import WebserviceSkillHandler
+
+from chatbot import ChatBot
+from model import FirstLayerDMM
+from realtime_search import RealtimeSearchEngine
+from automation import handle_automation
+from music_player import get_youtube_stream
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+USERNAME       = os.environ.get("Username", "Sir")
+ASSISTANT_NAME = os.environ.get("AssistantName", "Jarvis")
+
 app = Flask(__name__)
+sb  = SkillBuilder()
 
-errors = []
-
-try:
-    from chatbot import ChatBot
-except Exception as e:
-    errors.append(f"chatbot: {e}")
-
-try:
-    from model import FirstLayerDMM
-except Exception as e:
-    errors.append(f"model: {e}")
-
-try:
-    from realtime_search import RealtimeSearchEngine
-except Exception as e:
-    errors.append(f"realtime_search: {e}")
-
-try:
-    from automation import handle_automation
-except Exception as e:
-    errors.append(f"automation: {e}")
-
-try:
-    from music_player import get_youtube_stream
-except Exception as e:
-    errors.append(f"music_player: {e}")
-
-try:
-    from ask_sdk_core.skill_builder import SkillBuilder
-    from ask_sdk_webservice_support.webservice_handler import WebserviceSkillHandler
-except Exception as e:
-    errors.append(f"ask_sdk: {e}")
-
-@app.route("/debug-music", methods=["GET"])
-def debug_music():
-    import requests as req
-    song = __import__('flask').request.args.get("song", "Sahiba")
-    result = {}
-
-    # Step 1: Check API key
-    yt_key = os.environ.get("YoutubeAPIKey", "")
-    result["youtube_key_set"] = bool(yt_key)
-    result["youtube_key_preview"] = yt_key[:8] + "..." if yt_key else "MISSING"
-
-    # Step 2: Try YouTube search
-    if yt_key:
-        try:
-            r = req.get(
-                "https://www.googleapis.com/youtube/v3/search",
-                params={"part": "snippet", "q": song, "type": "video",
-                        "maxResults": 1, "key": yt_key},
-                timeout=8,
-            )
-            result["youtube_api_status"] = r.status_code
-            if r.status_code == 200:
-                items = r.json().get("items", [])
-                if items:
-                    result["video_id"] = items[0]["id"]["videoId"]
-                    result["video_title"] = items[0]["snippet"]["title"]
-                else:
-                    result["youtube_error"] = "No items returned"
-            else:
-                result["youtube_error"] = r.text[:200]
-        except Exception as e:
-            result["youtube_exception"] = str(e)
-
-    # Step 3: Try each Piped instance
-    video_id = result.get("video_id")
-    if video_id:
-        piped_results = {}
-        for instance in [
-            "https://pipedapi.kavin.rocks",
-            "https://api.piped.projectsegfau.lt",
-            "https://pipedapi.bocchi.rocks",
-            "https://piped-api.garudalinux.org",
-        ]:
-            try:
-                r = req.get(f"{instance}/streams/{video_id}", timeout=8)
-                piped_results[instance] = {
-                    "status": r.status_code,
-                    "streams": len(r.json().get("audioStreams", [])) if r.status_code == 200 else 0
-                }
-            except Exception as e:
-                piped_results[instance] = {"error": str(e)}
-        result["piped"] = piped_results
-
-    return __import__('flask').jsonify(result)
-
+# ── Health check ──────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def health():
-    if errors:
-        return jsonify({"status": "import errors", "errors": errors}), 500
-    return jsonify({"status": "ok", "message": "All imports successful!"})
+    return f"✅ {ASSISTANT_NAME} AI skill is running! Endpoint: /alexa"
 
-
-@app.route("/debug-invidious", methods=["GET"])
-def debug_invidious():
-    import requests as req
-    video_id = "n2dVFdqMYGA"  # Sahiba - we already know this works
-    results = {}
-
-    instances = [
-        "https://inv.nadeko.net",
-        "https://invidious.privacyredirect.com",
-        "https://yt.cdaut.de",
-        "https://invidious.nerdvpn.de",
-        "https://iv.melmac.space",
-    ]
-
-    for instance in instances:
-        try:
-            r = req.get(
-                f"{instance}/api/v1/videos/{video_id}",
-                headers={"User-Agent": "Mozilla/5.0"},
-                params={"fields": "adaptiveFormats,title"},
-                timeout=8,
-            )
-            results[instance] = {
-                "status": r.status_code,
-                "body_preview": r.text[:300]
-            }
-        except Exception as e:
-            results[instance] = {"error": str(e)}
-
-    return __import__('flask').jsonify(results)
-
-
-@app.route("/debug-cobalt", methods=["GET"])
-def debug_cobalt():
-    import requests as req
-    video_id = "n2dVFdqMYGA"
-    yt_url = f"https://www.youtube.com/watch?v={video_id}"
-    results = {}
-
-    instances = [
-        "https://api.cobalt.tools",
-        "https://cobalt.ayaka.io",
-        "https://cobalt-api.kwiatekmiki.com",
-    ]
-
-    for instance in instances:
-        try:
-            r = req.post(
-                instance,
-                json={
-                    "url": yt_url,
-                    "downloadMode": "audio",
-                    "audioFormat": "best",
-                    "filenameStyle": "basic",
-                },
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0",
-                },
-                timeout=10,
-            )
-            results[instance] = {
-                "status": r.status_code,
-                "body": r.text[:500]
-            }
-        except Exception as e:
-            results[instance] = {"error": str(e)}
-
-    return __import__('flask').jsonify(results)
-
+# ── Test music ────────────────────────────────────────────────
 @app.route("/test-music", methods=["GET"])
 def test_music():
-    if errors:
-        return jsonify({"status": "import errors", "errors": errors}), 500
-    from music_player import get_youtube_stream
-    song = __import__('flask').request.args.get("song", "Sahiba")
+    song = request.args.get("song", "Sahiba")
     url, title, _ = get_youtube_stream(song)
     if url:
         return jsonify({"status": "ok", "title": title, "url": url})
     return jsonify({"status": "error", "message": "Stream not found"}), 500
 
+# ── Launch ────────────────────────────────────────────────────
+@sb.request_handler(can_handle_func=is_request_type("LaunchRequest"))
+def launch_handler(handler_input: HandlerInput) -> Response:
+    speech = f"Namaste {USERNAME}! Main {ASSISTANT_NAME} hoon. Kya seva kar sakta hoon?"
+    return (
+        handler_input.response_builder
+        .speak(speech)
+        .ask("Haan boliye, main sun raha hoon.")
+        .response
+    )
+
+# ── Music ─────────────────────────────────────────────────────
+@sb.request_handler(can_handle_func=is_intent_name("MusicPlayIntent"))
+def music_handler(handler_input: HandlerInput) -> Response:
+    slots = handler_input.request_envelope.request.intent.slots
+    song  = slots["song"].value if slots.get("song") else None
+    if not song:
+        return (
+            handler_input.response_builder
+            .speak("Kaun sa gana bajana hai?")
+            .ask("Song ka naam batao.")
+            .response
+        )
+    stream_url, title, _ = get_youtube_stream(song)
+    if not stream_url:
+        return (
+            handler_input.response_builder
+            .speak(f"Sorry, {song} abhi nahi chal pa raha.")
+            .response
+        )
+    return (
+        handler_input.response_builder
+        .speak(f"Bajata hoon {title}.")
+        .add_directive(
+            PlayDirective(
+                play_behavior=PlayBehavior.REPLACE_ALL,
+                audio_item=AudioItem(
+                    stream=Stream(
+                        token=title,
+                        url=stream_url,
+                        offset_in_milliseconds=0,
+                    )
+                ),
+            )
+        )
+        .set_should_end_session(True)
+        .response
+    )
+
+# ── Query ─────────────────────────────────────────────────────
+@sb.request_handler(can_handle_func=is_intent_name("QueryIntent"))
+def query_handler(handler_input: HandlerInput) -> Response:
+    slots = handler_input.request_envelope.request.intent.slots
+    query = slots["query"].value if slots.get("query") else None
+    if not query:
+        return (
+            handler_input.response_builder
+            .speak("Kya jaanna chahte hain?")
+            .ask("Batao.")
+            .response
+        )
+
+    auto = handle_automation(query.lower())
+    if auto:
+        return handler_input.response_builder.speak(auto).ask("Aur kuch?").response
+
+    decisions = FirstLayerDMM(query)
+    answer = ""
+
+    for d in decisions:
+        if d.startswith("play "):
+            song = d.removeprefix("play ").strip()
+            stream_url, title, _ = get_youtube_stream(song)
+            if stream_url:
+                return (
+                    handler_input.response_builder
+                    .speak(f"Bajata hoon {title}.")
+                    .add_directive(
+                        PlayDirective(
+                            play_behavior=PlayBehavior.REPLACE_ALL,
+                            audio_item=AudioItem(
+                                stream=Stream(
+                                    token=title,
+                                    url=stream_url,
+                                    offset_in_milliseconds=0,
+                                )
+                            ),
+                        )
+                    )
+                    .set_should_end_session(True)
+                    .response
+                )
+            answer = f"Sorry, {song} nahi chal pa raha abhi."
+        elif d.startswith("realtime "):
+            answer = RealtimeSearchEngine(d.removeprefix("realtime ").strip())
+        elif d.startswith("general "):
+            answer = ChatBot(d.removeprefix("general ").strip())
+        elif d == "exit":
+            return (
+                handler_input.response_builder
+                .speak(f"Alvida {USERNAME}! Take care.")
+                .set_should_end_session(True)
+                .response
+            )
+        else:
+            answer = ChatBot(query)
+
+    return (
+        handler_input.response_builder
+        .speak(answer or "Samajh nahi aaya, dobara boliye.")
+        .ask("Aur kuch?")
+        .response
+    )
+
+# ── Control intents ───────────────────────────────────────────
+@sb.request_handler(can_handle_func=is_intent_name("AMAZON.PauseIntent"))
+def pause_handler(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_intent_name("AMAZON.ResumeIntent"))
+def resume_handler(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_intent_name("AMAZON.StopIntent"))
+def stop_handler(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_intent_name("AMAZON.CancelIntent"))
+def cancel_handler(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_intent_name("AMAZON.HelpIntent"))
+def help_handler(handler_input):
+    return handler_input.response_builder.response
+
+# ── Session ended (REQUIRED) ──────────────────────────────────
+@sb.request_handler(can_handle_func=is_request_type("SessionEndedRequest"))
+def session_ended_handler(handler_input):
+    return handler_input.response_builder.response
+
+# ── AudioPlayer events ────────────────────────────────────────
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStarted"))
+def playback_started(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFinished"))
+def playback_finished(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackStopped"))
+def playback_stopped(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("AudioPlayer.PlaybackFailed"))
+def playback_failed(handler_input):
+    return handler_input.response_builder.response
+
+@sb.request_handler(can_handle_func=is_request_type("PlaybackController.PlayCommandIssued"))
+def playback_command(handler_input):
+    return handler_input.response_builder.response
+
+# ── Error handler ─────────────────────────────────────────────
+@sb.exception_handler(can_handle_func=lambda i, e: True)
+def error_handler(handler_input, exception):
+    logger.error(f"Alexa error: {exception}", exc_info=True)
+    return (
+        handler_input.response_builder
+        .speak("Kuch gadbad ho gayi. Dobara try karein.")
+        .response
+    )
+
+# ── Alexa POST endpoint ───────────────────────────────────────
+skill_handler = WebserviceSkillHandler(skill=sb.create())
+
+@app.route("/alexa", methods=["POST"])
+def alexa_endpoint():
+    response = skill_handler.verify_request_and_dispatch(
+        http_headers=dict(request.headers),
+        http_body=request.data.decode("utf-8"),
+    )
+    return jsonify(response)
+
+# ── Vercel entry point ────────────────────────────────────────
 application = app
-handler = app
+handler     = app
