@@ -1,7 +1,7 @@
 """
 music_player.py — Jarvis AI Alexa Skill
-YouTube API v3 for search + Invidious proxy for AAC stream (itag=140).
-itag 140 = audio/mp4 AAC 128kbps — fully supported by Alexa AudioPlayer.
+YouTube API v3 for search + Piped proxy stream URLs for playback.
+Piped /streams endpoint returns its own proxy URLs (no cookies needed).
 """
 
 import os
@@ -13,13 +13,11 @@ logger = logging.getLogger(__name__)
 YOUTUBE_API_KEY = os.environ.get("YoutubeAPIKey", "")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# Only use instances confirmed working (200) from logs
-INVIDIOUS_INSTANCES = [
-    "https://invidious.projectsegfau.lt",
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
     "https://api.piped.projectsegfau.lt",
-    "https://yewtu.be",
-    "https://invidious.nerdvpn.de",
-    "https://iv.datura.network",
+    "https://pipedapi.bocchi.rocks",
+    "https://piped-api.garudalinux.org",
 ]
 
 
@@ -35,7 +33,7 @@ def _youtube_search(query: str):
                 "part": "snippet",
                 "q": query,
                 "type": "video",
-                "videoCategoryId": "10",  # Music
+                "videoCategoryId": "10",
                 "maxResults": 1,
                 "key": YOUTUBE_API_KEY,
             },
@@ -56,51 +54,71 @@ def _youtube_search(query: str):
         return None, None
 
 
-def _resolve_stream_url(instance: str, video_id: str):
+def _get_piped_stream(video_id: str):
     """
-    Follow the Invidious /latest_version redirect to get the real CDN URL.
-    Without local=true, Invidious redirects to the actual YouTube CDN URL.
-    These are direct mp4/aac files Alexa can stream.
+    Get audio stream URL from Piped.
+    Piped returns its own proxy URLs (e.g. /videoplayback?...) which
+    don't require YouTube cookies and are directly streamable by Alexa.
+    We prefer audio/mp4 (AAC) over audio/webm (opus) for Alexa compatibility.
     """
-    proxy_url = f"{instance}/latest_version?id={video_id}&itag=140"
-    try:
-        r = requests.get(
-            proxy_url,
-            headers=HEADERS,
-            timeout=8,
-            allow_redirects=True,
-            stream=True,  # Don't download body, just follow redirects
-        )
-        # The final URL after all redirects is the real CDN URL
-        final_url = r.url
-        ct = r.headers.get("Content-Type", "")
-        logger.info(f"Resolved: status={r.status_code} ct={ct} url={final_url[:80]}")
-        if r.status_code == 200 and final_url != proxy_url:
-            return final_url
-        # If no redirect happened but status is 200, try returning the proxy url
-        if r.status_code == 200:
-            return proxy_url
-        return None
-    except Exception as e:
-        logger.warning(f"Resolve failed for {instance}: {e}")
-        return None
+    for instance in PIPED_INSTANCES:
+        try:
+            r = requests.get(
+                f"{instance}/streams/{video_id}",
+                headers=HEADERS,
+                timeout=8,
+            )
+            if r.status_code != 200:
+                logger.warning(f"Piped {instance} returned {r.status_code}")
+                continue
+
+            data = r.json()
+            audio_streams = data.get("audioStreams", [])
+            if not audio_streams:
+                logger.warning(f"No audio streams from {instance}")
+                continue
+
+            logger.info(f"Got {len(audio_streams)} streams from {instance}")
+            for s in audio_streams:
+                logger.info(f"  mime={s.get('mimeType')} bitrate={s.get('bitrate')} url={s.get('url','')[:60]}")
+
+            # Sort by bitrate descending
+            audio_streams.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
+
+            # First pass: prefer audio/mp4 (AAC) — Alexa compatible
+            for s in audio_streams:
+                mime = s.get("mimeType", "")
+                url = s.get("url", "")
+                if "mp4" in mime and url:
+                    logger.info(f"Selected mp4 stream: {mime} @ {s.get('bitrate')}bps")
+                    return url
+
+            # Second pass: any audio format
+            for s in audio_streams:
+                url = s.get("url", "")
+                if url:
+                    mime = s.get("mimeType", "")
+                    logger.info(f"Fallback stream: {mime} @ {s.get('bitrate')}bps")
+                    return url
+
+        except Exception as e:
+            logger.warning(f"Piped {instance} error: {e}")
+            continue
+
+    return None
 
 
 def get_youtube_stream(query: str):
     """
     Returns (stream_url, title, None) or (None, None, None).
-    Flow: YouTube API v3 → Invidious redirect → real CDN URL
     """
     video_id, title = _youtube_search(query)
     if not video_id:
         return None, None, None
 
-    for instance in INVIDIOUS_INSTANCES:
-        url = _resolve_stream_url(instance, video_id)
-        if url:
-            logger.info(f"Stream URL resolved via {instance}: {url[:80]}")
-            return url, title, None
-        logger.warning(f"Instance failed: {instance}")
+    url = _get_piped_stream(video_id)
+    if url:
+        return url, title, None
 
-    logger.error(f"All Invidious instances failed for {video_id}")
+    logger.error(f"All Piped instances failed for {video_id}")
     return None, None, None
