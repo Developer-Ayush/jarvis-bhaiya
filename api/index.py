@@ -62,7 +62,7 @@ USERNAME       = os.environ.get("Username", "Sir")
 # ─────────────────────────────────────────────
 def matthew(text: str) -> str:
     text = text.replace("&", "and").replace("<", "").replace(">", "")
-    return f'<speak><voice name="Matthew">{text}</voice></speak>'
+    return f'<speak>{text}</speak>'
 
 def sanitise(text: str) -> str:
     import re
