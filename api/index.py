@@ -99,6 +99,38 @@ def health():
         return jsonify({"status": "import errors", "errors": errors}), 500
     return jsonify({"status": "ok", "message": "All imports successful!"})
 
+
+@app.route("/debug-invidious", methods=["GET"])
+def debug_invidious():
+    import requests as req
+    video_id = "n2dVFdqMYGA"  # Sahiba - we already know this works
+    results = {}
+
+    instances = [
+        "https://inv.nadeko.net",
+        "https://invidious.privacyredirect.com",
+        "https://yt.cdaut.de",
+        "https://invidious.nerdvpn.de",
+        "https://iv.melmac.space",
+    ]
+
+    for instance in instances:
+        try:
+            r = req.get(
+                f"{instance}/api/v1/videos/{video_id}",
+                headers={"User-Agent": "Mozilla/5.0"},
+                params={"fields": "adaptiveFormats,title"},
+                timeout=8,
+            )
+            results[instance] = {
+                "status": r.status_code,
+                "body_preview": r.text[:300]
+            }
+        except Exception as e:
+            results[instance] = {"error": str(e)}
+
+    return __import__('flask').jsonify(results)
+
 @app.route("/test-music", methods=["GET"])
 def test_music():
     if errors:
