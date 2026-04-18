@@ -1,15 +1,6 @@
 """
 api/index.py  —  Jarvis AI Alexa Skill
 Runs as a Flask serverless function on Vercel (free, no card, always on).
-
-Flow:
-  "Alexa, Bhaiya, Sahiba gana chalado"
-        ↓
-   Vercel HTTPS endpoint  (this file)
-        ↓
-   Alexa SDK processes request
-        ↓
-   Matthew voice + ad-free YouTube music
 """
 
 import sys
@@ -34,11 +25,41 @@ from ask_sdk_model.interfaces.audioplayer import (
     Stream, AudioItemMetadata, StopDirective,
 )
 
-from chatbot import ChatBot
-from realtime_search import RealtimeSearchEngine
-from model import FirstLayerDMM
-from automation import handle_automation
-from music_player import get_youtube_stream
+# ─────────────────────────────────────────────
+# SAFE TOP-LEVEL IMPORTS — errors shown at /
+# ─────────────────────────────────────────────
+
+_import_errors = []
+
+try:
+    from chatbot import ChatBot
+except Exception as e:
+    _import_errors.append(f"chatbot: {e}")
+    ChatBot = None
+
+try:
+    from realtime_search import RealtimeSearchEngine
+except Exception as e:
+    _import_errors.append(f"realtime_search: {e}")
+    RealtimeSearchEngine = None
+
+try:
+    from model import FirstLayerDMM
+except Exception as e:
+    _import_errors.append(f"model: {e}")
+    FirstLayerDMM = None
+
+try:
+    from automation import handle_automation
+except Exception as e:
+    _import_errors.append(f"automation: {e}")
+    handle_automation = None
+
+try:
+    from music_player import get_youtube_stream
+except Exception as e:
+    _import_errors.append(f"music_player: {e}")
+    get_youtube_stream = None
 
 # ─────────────────────────────────────────────
 app = Flask(__name__)
@@ -72,7 +93,6 @@ def process_decision(decision: list, original_query: str):
          if i.startswith("general") or i.startswith("realtime")]
     )
 
-    # Music
     for d in decision:
         if d.startswith("play "):
             song = d.removeprefix("play ").strip()
@@ -81,7 +101,6 @@ def process_decision(decision: list, original_query: str):
                 return f"Playing {title} for you {USERNAME}. Enjoy!", url
             return f"Sorry {USERNAME}, could not find {song}. Try another song.", None
 
-    # Automation
     auto_funcs = ["google search", "youtube search", "content", "reminder"]
     auto_lines = []
     for d in decision:
@@ -90,16 +109,13 @@ def process_decision(decision: list, original_query: str):
             if r:
                 auto_lines.append(r)
 
-    # Real-time
     if R:
         return sanitise(RealtimeSearchEngine(merged or original_query)), None
 
-    # General
     for d in decision:
         if d.startswith("general "):
             return sanitise(ChatBot(d.replace("general ", "").strip())), None
 
-    # Exit
     for d in decision:
         if d == "exit":
             return f"Goodbye {USERNAME}, have a great day!", None
@@ -133,7 +149,6 @@ class LaunchRequestHandler(AbstractRequestHandler):
 
 
 class MusicPlayIntentHandler(AbstractRequestHandler):
-    """Handles: 'Sahiba gana chalado', 'play Tum Hi Ho', etc."""
     def can_handle(self, handler_input):
         return is_intent_name("MusicPlayIntent")(handler_input)
 
@@ -309,7 +324,6 @@ class FallbackIntentHandler(AbstractRequestHandler):
         )
 
 
-# AudioPlayer event handlers (required when AudioPlayer is enabled)
 class AudioPlayerHandler(AbstractRequestHandler):
     def can_handle(self, handler_input):
         return handler_input.request_envelope.request.object_type.startswith("AudioPlayer.")
@@ -373,11 +387,10 @@ skill = sb.create()
 
 @app.route("/alexa", methods=["POST"])
 def alexa_endpoint():
-    """Main endpoint Alexa calls. Paste this URL in your skill endpoint."""
     handler = WebServiceSkillHandler(
         skill=skill,
-        verify_signature=False,   # Set True after testing
-        verify_timestamp=False,   # Set True after testing
+        verify_signature=False,
+        verify_timestamp=False,
     )
     response = handler.verify_request_and_dispatch(
         http_api_headers=dict(request.headers),
@@ -388,28 +401,10 @@ def alexa_endpoint():
 
 @app.route("/", methods=["GET"])
 def health():
-    errors = []
-    try:
-        from chatbot import ChatBot
-    except Exception as e:
-        errors.append(f"chatbot: {e}")
-    try:
-        from realtime_search import RealtimeSearchEngine
-    except Exception as e:
-        errors.append(f"realtime_search: {e}")
-    try:
-        from model import FirstLayerDMM
-    except Exception as e:
-        errors.append(f"model: {e}")
-    try:
-        from automation import handle_automation
-    except Exception as e:
-        errors.append(f"automation: {e}")
-    try:
-        from music_player import get_youtube_stream
-    except Exception as e:
-        errors.append(f"music_player: {e}")
-
-    if errors:
-        return "<br>".join(errors), 500
+    # Shows exactly which module failed to import and why
+    if _import_errors:
+        return (
+            "<h2>❌ Import Errors — fix these:</h2><br>"
+            + "<br>".join(_import_errors)
+        ), 500
     return f"✅ {ASSISTANT_NAME} running! Endpoint: /alexa", 200
