@@ -130,3 +130,5 @@ def get_youtube_stream(query: str):
 
     logger.error(f"yt-dlp failed for: {title} ({video_id})")
     return None, None, None
+application = app
+handler = app
