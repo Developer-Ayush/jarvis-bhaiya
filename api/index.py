@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from flask import Flask, request, jsonify
+from music_player import get_youtube_stream  # ← moved to top level
 
 app = Flask(__name__)
 
@@ -23,7 +24,8 @@ COHERE_KEY     = os.environ.get("CohereApiKey", "")
 def matthew(text: str) -> str:
     text = text.replace("&", "and").replace("<", "").replace(">", "")
     return f'<speak><lang xml:lang="hi-IN">{text}</lang></speak>'
-    
+
+
 def _build_response(text, end_session, reprompt=None, directives=None):
     response = {
         "outputSpeech": {"type": "SSML", "ssml": matthew(text)},
@@ -80,7 +82,6 @@ def _process_decision(decision, original_query):
     for d in decision:
         if d.startswith("play "):
             song = d.removeprefix("play ").strip()
-            from music_player import get_youtube_stream
             url, title, _ = get_youtube_stream(song)
             if url:
                 return f"Playing {title} for you {USERNAME}!", url
@@ -111,6 +112,25 @@ def _process_decision(decision, original_query):
     return clean(ChatBot(original_query)), None
 
 
+# ─────────────────────────────────────────────
+# ROUTES
+# ─────────────────────────────────────────────
+
+@app.route("/test-music", methods=["GET"])
+def test_music():
+    song = request.args.get("song", "Sahiba")
+    url, title, _ = get_youtube_stream(song)
+    if url:
+        html = (
+            "<h2>Stream found!</h2>"
+            "<p><b>Song:</b> " + title + "</p>"
+            "<p><b>URL:</b> " + url[:120] + "...</p>"
+            "<audio controls src='" + url + "'>no audio support</audio>"
+        )
+        return html, 200
+    return "<h2>Stream failed for: " + song + "</h2><p>Check Vercel Logs.</p>", 500
+
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({
@@ -118,6 +138,7 @@ def health():
         "assistant": ASSISTANT_NAME,
         "groq_key_set": bool(GROQ_KEY),
         "cohere_key_set": bool(COHERE_KEY),
+        "youtube_key_set": bool(os.environ.get("YoutubeAPIKey", "")),
         "endpoint": "/alexa"
     }), 200
 
@@ -150,7 +171,6 @@ def alexa_endpoint():
                         end_session=False,
                         reprompt="Song ka naam batao."
                     )
-                from music_player import get_youtube_stream
                 url, title, _ = get_youtube_stream(song)
                 if url:
                     return _build_audio_response(f"Suno {USERNAME}, {title}!", url, title)
