@@ -11,7 +11,7 @@ import cohere
 logger = logging.getLogger(__name__)
 
 COHERE_API_KEY = os.environ.get("CohereApiKey", "")
-co = cohere.ClientV2(api_key=COHERE_API_KEY)
+co = cohere.Client(api_key=COHERE_API_KEY)
 
 FUNCS = [
     "exit", "general", "realtime", "play",
