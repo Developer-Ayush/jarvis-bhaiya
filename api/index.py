@@ -1,9 +1,9 @@
 """
 api/index.py — Jarvis AI Alexa Skill (Vercel entry point)
 FIXES:
-  - FIX-1: Flask Response import conflict with ask_sdk_model.Response (aliased)
-  - FIX-2: AudioPlayer control handlers now return proper stop directives
-  - FIX-3: SessionEndedRequest handler properly handles error reason
+  - FIX-1: Flask Response aliased so ask_sdk_model.Response doesn't overwrite it
+  - FIX-2: Removed non-existent StopDirective import (was crashing at startup in 6ms)
+  - FIX-3: AudioPlayer pause/stop handled correctly without StopDirective
 """
 
 import sys
@@ -11,15 +11,14 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
-# FIX-1: Alias Flask's Response so it isn't overwritten by ask_sdk_model's Response
-from flask import Flask, request, jsonify, Response as FlaskResponse
+from flask import Flask, request, jsonify, Response as FlaskResponse   # FIX-1: aliased
 from ask_sdk_core.skill_builder import SkillBuilder
 from ask_sdk_core.handler_input import HandlerInput
 from ask_sdk_core.utils import is_request_type, is_intent_name
-from ask_sdk_model import Response                          # Alexa response type
+from ask_sdk_model import Response
 from ask_sdk_model.interfaces.audioplayer import (
     PlayDirective, PlayBehavior, AudioItem, Stream,
-    StopDirective,                                         # FIX-2: needed for pause/stop
+    # FIX-2: StopDirective does NOT exist in this module — removed
 )
 from ask_sdk_webservice_support.webservice_handler import WebserviceSkillHandler
 
@@ -120,7 +119,6 @@ def query_handler(handler_input: HandlerInput) -> Response:
             .response
         )
 
-    # Automation check first
     auto = handle_automation(query.lower())
     if auto:
         return handler_input.response_builder.speak(auto).ask("Aur kuch?").response
@@ -178,25 +176,22 @@ def query_handler(handler_input: HandlerInput) -> Response:
     )
 
 
-# ── FIX-2: Control intents — proper directives ─────────────────────────────────
+# ── FIX-3: Control intents ─────────────────────────────────────────────────────
+# For AudioPlayer skills, Alexa handles pause/resume natively at the device level.
+# These handlers just need to return a valid (even empty) response — no directive needed.
+
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.PauseIntent"))
 def pause_handler(handler_input: HandlerInput) -> Response:
-    return (
-        handler_input.response_builder
-        .add_directive(StopDirective())
-        .response
-    )
+    return handler_input.response_builder.response
 
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.ResumeIntent"))
 def resume_handler(handler_input: HandlerInput) -> Response:
-    # Alexa handles resume natively for AudioPlayer; just return empty
     return handler_input.response_builder.response
 
 @sb.request_handler(can_handle_func=is_intent_name("AMAZON.StopIntent"))
 def stop_handler(handler_input: HandlerInput) -> Response:
     return (
         handler_input.response_builder
-        .add_directive(StopDirective())
         .speak(f"Theek hai {USERNAME}, band kar raha hoon.")
         .set_should_end_session(True)
         .response
@@ -206,7 +201,6 @@ def stop_handler(handler_input: HandlerInput) -> Response:
 def cancel_handler(handler_input: HandlerInput) -> Response:
     return (
         handler_input.response_builder
-        .add_directive(StopDirective())
         .set_should_end_session(True)
         .response
     )
@@ -225,13 +219,12 @@ def help_handler(handler_input: HandlerInput) -> Response:
     )
 
 
-# ── FIX-3: Session ended — handle ERROR reason gracefully ──────────────────────
+# ── Session ended ──────────────────────────────────────────────────────────────
 @sb.request_handler(can_handle_func=is_request_type("SessionEndedRequest"))
 def session_ended_handler(handler_input: HandlerInput) -> Response:
-    reason = getattr(handler_input.request_envelope.request, "reason", None)
-    error  = getattr(handler_input.request_envelope.request, "error", None)
+    error = getattr(handler_input.request_envelope.request, "error", None)
     if error:
-        logger.error(f"SessionEnded reason={reason} error={error}")
+        logger.error(f"SessionEnded with error: {error}")
     return handler_input.response_builder.response
 
 
@@ -261,7 +254,7 @@ def playback_command(handler_input: HandlerInput) -> Response:
 # ── Error handler ──────────────────────────────────────────────────────────────
 @sb.exception_handler(can_handle_func=lambda i, e: True)
 def error_handler(handler_input: HandlerInput, exception: Exception) -> Response:
-    logger.error(f"Alexa error: {exception}", exc_info=True)
+    logger.error(f"Alexa skill error: {exception}", exc_info=True)
     return (
         handler_input.response_builder
         .speak("Kuch gadbad ho gayi. Dobara try karein.")
@@ -270,10 +263,10 @@ def error_handler(handler_input: HandlerInput, exception: Exception) -> Response
     )
 
 
-# ── Alexa POST endpoint — FIX-1 applied: FlaskResponse instead of Response ─────
+# ── Alexa POST endpoint ────────────────────────────────────────────────────────
 skill_handler = WebserviceSkillHandler(
     skill=sb.create(),
-    verify_signature=False,   # Vercel proxy mangles headers
+    verify_signature=False,
     verify_timestamp=False,
 )
 
@@ -284,8 +277,7 @@ def alexa_endpoint():
             http_headers=dict(request.headers),
             http_body=request.data.decode("utf-8"),
         )
-        # FIX-1: Using FlaskResponse (aliased above) — not ask_sdk_model.Response
-        return FlaskResponse(response, content_type="application/json")
+        return FlaskResponse(response, content_type="application/json")  # FIX-1
     except Exception as e:
         logger.error(f"Alexa endpoint error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
